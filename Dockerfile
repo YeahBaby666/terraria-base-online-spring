@@ -1,6 +1,6 @@
 # ETAPA 1: Construcción (Maven)
 FROM maven:3.9.6-eclipse-temurin-21-alpine AS build
-WORKDIR /app
+
 # Copiar solo el pom.xml primero para aprovechar la caché de capas de Docker
 COPY pom.xml .
 RUN mvn dependency:go-offline
@@ -10,8 +10,7 @@ COPY src ./src
 RUN mvn clean package -DskipTests
 
 # ETAPA 2: Ejecución
-FROM eclipse-temurin:21-jre-alpine
-WORKDIR /app
+FROM openjdk:21-jdk-slim
 
 # Crear un usuario no raíz por seguridad
 RUN addgroup -S spring && adduser -S spring -G spring
