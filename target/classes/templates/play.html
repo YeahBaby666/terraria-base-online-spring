@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="es" xmlns:th="http://www.thymeleaf.org" xmlns:sec="http://www.thymeleaf.org/extras/spring-security">
+
+<head>
+    <meta charset="UTF-8">
+    <title>Jugar - Engine IO</title>
+    <!-- Librerías de Producción -->
+    <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <style>
+        /* CSS Base del Cliente */
+        body {
+            margin: 0;
+            background: #000;
+            color: #fff;
+            font-family: sans-serif;
+            overflow: hidden;
+            height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        #loader {
+            text-align: center;
+        }
+
+        .spinner {
+            border: 4px solid rgba(255, 255, 255, 0.3);
+            border-radius: 50%;
+            border-top: 4px solid #3b82f6;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 10px;
+        }
+
+        @keyframes spin {
+            0% {
+                transform: rotate(0deg);
+            }
+
+            100% {
+                transform: rotate(360deg);
+            }
+        }
+
+        #game-stage {
+            width: 100%;
+            height: 100%;
+            display: none;
+        }
+    </style>
+</head>
+
+<body data-room-id="[[${roomId}]]" data-user-name="[[${currentUsername}]]">
+    <div id="loader">
+        <div class="spinner"></div>
+        <div id="status">Conectando...</div>
+    </div>
+
+    <!-- EL HTML DE ESTRUCTURA SE INYECTA AQUÍ -->
+    <div id="game-stage">
+        <!-- INYECCIÓN DEL HTML DE ESTRUCTURA (th:utext evita que Spring escape el HTML) -->
+        <div th:utext="${clientStructureHtml}"></div>
+    </div>
+
+    <!-- SCRIPTS DE JUEGO INYECTADOS DIRECTAMENTE -->
+    <th:block th:utext="${clientRenderScript}"></th:block>
+    <th:block th:utext="${clientInputScript}"></th:block>
+
+
+    <!-- CÓDIGO CORE DEL MOTOR DE CONEXIÓN -->
+    <script>
+        // ... (Tu código anterior de setup, init, y SIM_emit permanece igual)
+
+        // La función onRender debe ser definida por el script inyectado
+        let clientRenderFunction = typeof onRender === 'function' ? onRender : null;
+
+        // ... (Tu código anterior de init, join_room, state_update permanece igual)
+
+        // ------------------------------------------------------------------
+        // FUNCIÓN CORE: INYECTAR Y ACTUALIZAR CÓDIGO DEL CLIENTE
+        // ------------------------------------------------------------------
+        function injectNewDesign(content) {
+            // 1. Eliminar scripts anteriores (es crucial para evitar duplicados y errores)
+            // Usamos un selector general si los scripts inyectados usan la misma estrategia de marcado.
+            document.querySelectorAll('script[data-game-script], script:not([src])').forEach(s => {
+                // Solo eliminar scripts que no son el script CORE que contiene 'init'
+                if (s.textContent.indexOf('init()') === -1) {
+                    s.remove();
+                }
+            });
+
+            // 2. Reemplazar la Estructura HTML (Limpiando el contenedor principal)
+            // NOTA: Esto destruye el estado actual de cualquier elemento DOM (ej: un canvas)
+            const gameStage = document.getElementById('game-stage');
+            // Para asegurar que solo se reemplaza el contenido inyectado por Thymeleaf
+            const injectedContent = gameStage.querySelector('div[th\\:utext]');
+
+            if (injectedContent) {
+                injectedContent.innerHTML = content.structure;
+            } else {
+                // Si el selector es complejo, simplemente reemplaza todo el contenido de game-stage (destructivo)
+                gameStage.innerHTML = content.structure;
+            }
+
+            // 3. Inyectar el nuevo script de Render
+            const renderScriptEl = document.createElement('script');
+            renderScriptEl.setAttribute('data-game-script', 'render');
+            renderScriptEl.textContent = content.renderScript; // El servidor ya debe haber quitado las etiquetas <script>
+            document.body.appendChild(renderScriptEl);
+
+            // 4. Inyectar el nuevo script de Input
+            const inputScriptEl = document.createElement('script');
+            inputScriptEl.setAttribute('data-game-script', 'input');
+            inputScriptEl.textContent = content.inputScript; // El servidor ya debe haber quitado las etiquetas <script>
+            document.body.appendChild(inputScriptEl);
+
+            // 5. Reestablecer la referencia a la nueva función onRender (definida globalmente por el script inyectado)
+            clientRenderFunction = typeof onRender === 'function' ? onRender : null;
+            if (!clientRenderFunction) {
+                console.error("Error Crítico: onRender no se encontró en el nuevo script.");
+            }
+
+            document.getElementById('status').innerText = "Diseño actualizado. Jugando...";
+        }
+
+
+        // ------------------------------------------------------------------
+        // INICIO
+        // ------------------------------------------------------------------
+        async function init() {
+            // ... (Tu código de inicio y conexión)
+
+            // 3. Manejo de Errores y Actualización (Redirigir si el creador cambia el código)
+            // socket.on('design_update', () => { window.location.reload(); }); // Versión anterior
+
+            socket.on('design_update', (data) => {
+                console.log("El creador actualizó el diseño. Actualizando scripts recibidos por Socket...");
+                alert("El creador actualizó el diseño. Aplicando cambios..."); // Alertar al usuario
+                injectNewDesign({
+                    structure: data.structure,
+                    renderScript: data.renderScript,
+                    inputScript: data.inputScript
+                });
+            });
+        }
+
+        init();
+    </script>
+</body>
+
+</html>
