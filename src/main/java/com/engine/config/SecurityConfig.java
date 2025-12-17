@@ -32,9 +32,8 @@ public class SecurityConfig {
             // 2. Autorización de Rutas
             .authorizeHttpRequests(auth -> auth
                 // Recursos estáticos y vistas públicas
-                .requestMatchers("/", "/register", "/login", "/css/**", "/js/**", "/images/**").permitAll()
-                // Permitimos editor y play a anónimos (validado en la vista con Thymeleaf)
-                .requestMatchers("/editor/**", "/play/**").permitAll()
+                .requestMatchers("/register", "/login", "/css/**", "/js/**", "/images/**").permitAll()
+                
                 // Cualquier otra cosa requiere autenticación
                 .anyRequest().authenticated()
             )

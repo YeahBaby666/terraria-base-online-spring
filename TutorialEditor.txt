@@ -1,0 +1,441 @@
+📑 Manual del Desarrollador: Motor Real-Time (Node.js + VM)
+1. La Arquitectura: ¿Qué pasa detrás del servidor?
+Tu servidor no es una página web estática; es un Bucle de Simulación.
+
+El Socket (La Oreja): Recibe ráfagas de datos de los jugadores. No los procesa al instante para no saturar la CPU; los guarda en una inputQueue (un array).
+
+El Tick (El Reloj): Cada 16ms (60 veces por segundo), el servidor hace una "vuelta":
+
+Consumo de Secuencias: Vacía el array de inputs y aplica los cambios al estado.
+
+Simulación Física (onUpdate): Calcula dónde deberían estar los cubos tras aplicar gravedad y colisiones.
+
+Broadcast: Envía una "foto" del estado final a todos los clientes conectados.
+
+2. Documentación de la API del Editor
+🟢 Lógica del Servidor (ed-logic)
+Es el cerebro. Corre en un entorno seguro (vm) dentro de Node.js.
+
+state: Objeto global persistente. Todo lo que guardes aquí se sincroniza con los jugadores y se guarda en Supabase al cerrar la sala.
+
+onUpdate(state, dt): Se ejecuta 60 veces por segundo.
+
+dt: Delta Time (aprox. 0.016). Úsalo para que el movimiento sea independiente de los FPS (pos += vel * dt).
+
+onInput(payload, state): Se ejecuta por cada mensaje enviado por un cliente.
+
+payload: El objeto que enviaste desde el cliente (ej. {type: 'jump'}).
+
+payload.id: Identificador único del jugador que envió el dato.
+
+🔵 Input del Cliente (ed-input)
+Es el sistema de captura. Su único trabajo es decir qué está haciendo el usuario.
+
+window.SIM_emit(objeto): Envía datos al servidor. Regla de Oro: Envía solo cambios de estado (ej. "empecé a caminar") o disparos (ej. "salté"), nunca la posición X, Y directamente, o los jugadores podrán hacer trampas.
+
+canvas: Referencia al área de dibujo para detectar clicks o posición del mouse.
+
+🔴 Renderizado del Cliente (ed-render)
+Es la cara del juego. No tiene lógica, solo dibuja lo que el servidor le dice.
+
+window.onRender(state): Recibe el estado del servidor.
+
+window.USER_NAME: Variable global que contiene el nombre del cliente (útil para pintarte de otro color).
+
+3. Consejos para crear Minijuegos
+Detección de Colisiones (AABB): Para juegos 2D, usa siempre la comparación de rectángulos: if (rect1.x < rect2.x + rect2.w && rect1.x + rect1.w > rect2.x ...)
+
+Sincronización de Rejilla (Grid): Si haces juegos de construcción (como el actual), usa Math.floor(pos / tamaño) * tamaño para que los bloques siempre encajen perfectamente.
+
+Evitar el Lag Visual: Dibuja siempre un "Suelo Base" en el render para que, aunque haya lag de red, el jugador tenga una referencia visual de dónde está el límite del mundo.
+
+ejemplo de una sala:
+1. logic.js para la logica del server, ya contiene datos para ser usados aqui como IA(), el estado general y demas:
+// --- CONFIGURACIÓN Y ESTADO INICIAL ---
+if (!state.initialized) {
+    state.jugadores_data = {};
+    state.bloques = []; 
+    state.gravity = 0; // Gravedad ajustada para el dt
+    state.worldWidth = 5000; // Tamaño del mundo expandido
+    state.initialized = true;
+}
+state.gravity = 95; // Gravedad ajustada para el dt
+function onUpdate(state, dt) {
+    for (let id in state.jugadores_data) {
+        let p = state.jugadores_data[id];
+        
+        // 1. Aplicar Gravedad
+        p.vy = (p.vy || 0) + state.gravity * dt;
+
+        // 2. Calcular siguiente posición
+        // Velocidad horizontal de 50 unidades por segundo
+        let nextX = p.x + (p.vx || 0) * 50 * dt; 
+        let nextY = p.y + p.vy * dt;
+
+        // 3. Reset de estado de suelo
+        p.onGround = false;
+
+        // 4. COLISIÓN CON EL SUELO BASE (Mundo de 5000px)
+        if (nextY > 550) {
+            nextY = 550;
+            p.vy = 0;
+            p.onGround = true;
+        }
+
+        // 5. LÍMITES LATERALES DEL MUNDO (Respawn central si se sale)
+        if (nextX < -1000 || nextX > state.worldWidth) {
+            nextX = 2500; // Respawn al centro
+            nextY = 0;
+        }
+
+        // 6. COLISIÓN CON BLOQUES (AABB)
+        state.bloques.forEach(b => {
+            // Colisión Vertical
+            if (nextX + 19 > b.x && nextX + 1 < b.x + b.w) {
+                // Caer sobre bloque
+                if (p.y + 20 <= b.y && nextY + 20 > b.y) {
+                    nextY = b.y - 20;
+                    p.vy = 0;
+                    p.onGround = true;
+                }
+                // Chocar con techo
+                else if (p.y >= b.y + b.h && nextY < b.y + b.h) {
+                    nextY = b.y + b.h;
+                    p.vy = 0;
+                }
+            }
+            
+            // Colisión Horizontal
+            if (nextY + 19 > b.y && nextY + 1 < b.y + b.h) {
+                if (p.x + 20 <= b.x && nextX + 20 > b.x) {
+                    nextX = b.x - 20;
+                }
+                else if (p.x >= b.x + b.w && nextX < b.x + b.w) {
+                    nextX = b.x + b.w;
+                }
+            }
+        });
+
+        p.x = nextX;
+        p.y = nextY;
+    }
+}
+
+function onInput(payload, state) {
+    const id = payload.id;
+    
+    // Inicializar jugador si no existe
+    if (!state.jugadores_data[id]) {
+        state.jugadores_data[id] = { 
+            x: 2500, // Spawn central
+            y: 100, 
+            vx: 0, 
+            vy: 0, 
+            mouseX: 0, 
+            mouseY: 0,
+            onGround: false 
+        };
+    }
+    const p = state.jugadores_data[id];
+
+    // CONSTRUIR BLOQUE (Ajustado a rejilla de 40px)
+    if (payload.type === 'click') {
+        const gridX = Math.floor(payload.x / 40) * 40;
+        const gridY = Math.floor(payload.y / 40) * 40;
+        
+        // Evitar duplicados en la misma celda
+        if (!state.bloques.some(b => b.x === gridX && b.y === gridY)) {
+            state.bloques.push({ x: gridX, y: gridY, w: 40, h: 40 });
+        }
+    }
+
+    // ELIMINAR BLOQUE
+    if (payload.type === 'remove_block') {
+        const gridX = Math.floor(payload.x / 40) * 40;
+        const gridY = Math.floor(payload.y / 40) * 40;
+        state.bloques = state.bloques.filter(b => b.x !== gridX || b.y !== gridY);
+    }
+
+    // MOVIMIENTO HORIZONTAL
+    if (payload.type === 'move_state') {
+        p.vx = payload.vx; // -1, 0, 1
+    }
+
+    // SALTO
+    if (payload.type === 'jump_trigger') {
+        if (p.onGround) {
+            p.vy = -110; // Impulso de salto
+            p.onGround = false;
+        }
+    }
+
+    // SINCRONIZACIÓN DE CURSOR (Coordenadas fluidas)
+    if (payload.type === 'cursor') {
+        p.mouseX = payload.x;
+        p.mouseY = payload.y;
+    }
+}
+
+design.html(Estructura / Render / Input) para el cliente:
+1. Estructura (HTML / CSS):
+<style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body, html { width: 100%; height: 100%; overflow: hidden; background: #111; }
+    #game-container { position: relative; width: 100vw; height: 100vh; }
+    canvas { display: block; width: 100%; height: 100%; touch-action: none; }
+
+    /* UI de Selección */
+    .hotbar {
+        position: fixed; top: 20px; left: 50%; transform: translateX(-50%);
+        display: flex; gap: 10px; z-index: 100;
+    }
+    .item-slot {
+        width: 60px; height: 60px; background: rgba(0,0,0,0.8);
+        border: 2px solid #444; border-radius: 12px;
+        display: flex; align-items: center; justify-content: center;
+        color: #666; cursor: pointer; transition: 0.2s;
+    }
+    .item-slot.active { border-color: #3b82f6; color: white; box-shadow: 0 0 15px rgba(59, 130, 246, 0.5); }
+
+    /* Controles Móviles */
+    .mobile-controls {
+        position: fixed; bottom: 30px; width: 100%;
+        display: flex; justify-content: space-between; padding: 0 40px;
+        pointer-events: none; z-index: 100;
+    }
+    .btn-group { display: flex; gap: 20px; pointer-events: auto; }
+    .mobile-btn {
+        width: 80px; height: 80px; background: rgba(255,255,255,0.1);
+        backdrop-filter: blur(8px); border: 2px solid rgba(255,255,255,0.2);
+        border-radius: 50%; display: flex; align-items: center; justify-content: center;
+        color: white; font-size: 2rem;
+    }
+</style>
+
+<div id="game-container">
+    <div class="hotbar">
+        <div id="slot-build" class="item-slot active" onclick="setMode('build')">⛏</div>
+        <div id="slot-destroy" class="item-slot" onclick="setMode('destroy')">💣</div>
+    </div>
+    <canvas id="gameCanvas"></canvas>
+    <div class="mobile-controls">
+        <div class="btn-group">
+            <div id="btn-left" class="mobile-btn"><i class="fa-solid fa-arrow-left"></i></div>
+            <div id="btn-right" class="mobile-btn"><i class="fa-solid fa-arrow-right"></i></div>
+        </div>
+        <div class="btn-group">
+            <div id="btn-jump" class="mobile-btn" style="background:rgba(16,185,129,0.3)"><i class="fa-solid fa-up-long"></i></div>
+        </div>
+    </div>
+</div>
+
+2. Renderizado (onRender): 
+{
+    const canvas = document.getElementById('gameCanvas');
+// Evitar que aparezca el menú del navegador al hacer click derecho en el canvas
+canvas.addEventListener('contextmenu', (e) => {
+    e.preventDefault();
+});
+
+    const ctx = canvas.getContext('2d');
+    
+    // Variables de cámara persistentes
+    window.camX = 0;
+    window.camY = 0;
+
+    function resize() {
+        canvas.width = window.innerWidth;
+        canvas.height = window.innerHeight;
+    }
+    window.addEventListener('resize', resize);
+    resize();
+
+    window.onRender = function(state) {
+        if (!state.jugadores_data || !state.jugadores_data[USER_NAME]) return;
+        
+        const me = state.jugadores_data[USER_NAME];
+
+        // 1. CÁMARA CON DELAY (Lerp)
+        // El factor 0.1 crea el retraso suave
+        window.camX += (me.x - canvas.width / 2 - window.camX) * 0.1;
+        window.camY += (me.y - canvas.height / 2 - window.camY) * 0.1;
+
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        ctx.save();
+        ctx.translate(-window.camX, -window.camY);
+
+        // 2. DIBUJAR MUNDO (Suelo base extendido)
+        ctx.fillStyle = '#1a1a1a';
+        ctx.fillRect(-2000, -2000, 10000, 10000); 
+        
+        ctx.fillStyle = '#333'; // Suelo físico
+        ctx.fillRect(-2000, 550, 10000, 2000);
+
+        // 3. BLOQUES
+        ctx.fillStyle = '#FFFDD0'; 
+        ctx.strokeStyle = '#E6E4BC';
+        state.bloques.forEach(b => {
+            ctx.fillRect(b.x, b.y, b.w, b.h);
+            ctx.strokeRect(b.x, b.y, b.w, b.h);
+        });
+
+        // 4. JUGADORES Y CURSORES
+        ctx.textAlign = "center";
+        for (let id in state.jugadores_data) {
+            const p = state.jugadores_data[id];
+            const isMe = (id === USER_NAME);
+
+            // Cubo
+            ctx.fillStyle = isMe ? '#3b82f6' : '#ff4444';
+            ctx.fillRect(p.x, p.y, 20, 20);
+
+            // Nombre encima
+            ctx.fillStyle = 'white';
+            ctx.font = 'bold 12px Arial';
+            ctx.fillText(id, p.x + 10, p.y - 10);
+
+            // Cursor en el mapa (Posición del mundo)
+            ctx.strokeStyle = isMe ? 'cyan' : 'rgba(255,255,255,0.3)';
+            ctx.beginPath();
+            ctx.arc(p.mouseX, p.mouseY, 5, 0, Math.PI * 2);
+            ctx.stroke();
+        }
+        
+        ctx.restore();
+    };
+}
+3. Entrada (Input / Events):
+{
+    const canvas = document.getElementById('gameCanvas'); // apuntan al mismo
+
+    const send = (data) => window.SIM_emit(data);
+    
+    // Estado de teclas para evitar ruidos en el servidor
+    const keys = { a: false, d: false };
+
+// Estado global del modo de juego
+window.gameMode = 'build'; 
+
+function setMode(mode) {
+    window.gameMode = mode;
+    
+    // Actualización visual de las clases active
+    document.querySelectorAll('.item-slot').forEach(slot => {
+        slot.classList.remove('active');
+    });
+    
+    const activeSlot = document.getElementById(`slot-${mode}`);
+    if (activeSlot) activeSlot.classList.add('active');
+}
+
+    
+    // --- 1. FUNCIÓN DE COORDENADAS PRECISAS (Corregida) ---
+    const getCoords = (e) => {
+        const rect = canvas.getBoundingClientRect();
+        // Soporta múltiples tipos de puntero y touch
+        const clientX = e.clientX ?? (e.touches && e.touches[0].clientX);
+        const clientY = e.clientY ?? (e.touches && e.touches[0].clientY);
+        
+        // Ajuste por escala del canvas y posición de la cámara
+        return {
+            x: (clientX - rect.left) * (canvas.width / rect.width) + (window.camX || 0),
+            y: (clientY - rect.top) * (canvas.height / rect.height) + (window.camY || 0)
+        };
+    };
+
+    // --- 2. EMISIÓN DE MOVIMIENTO (Horizontal) ---
+    const updateMove = () => {
+        let vx = 0;
+        if (keys.a) vx = -1;
+        if (keys.d) vx = 1;
+        // Solo enviamos move_state para actualizar la dirección
+        send({ type: 'move_state', vx: vx });
+    };
+
+    // --- 3. CONFIGURACIÓN DE BOTONES MÓVILES ---
+    // --- SOLUCIÓN AL INPUT PEGAJOSO ---
+    const setupMobileBtn = (id, key, isJump = false) => {
+        const el = document.getElementById(id);
+        if (!el) return;
+
+        const startAction = (e) => {
+            e.preventDefault();
+            if (isJump) {
+                send({ type: 'jump_trigger' });
+            } else {
+                keys[key] = true;
+                updateMove();
+            }
+        };
+
+        const stopAction = (e) => {
+            e.preventDefault();
+            if (!isJump && keys[key]) {
+                keys[key] = false;
+                updateMove();
+            }
+        };
+
+        // Eventos de inicio
+        el.addEventListener('touchstart', startAction, { passive: false });
+        el.addEventListener('mousedown', startAction);
+
+        // Eventos de fin (dentro del botón)
+        el.addEventListener('touchend', stopAction);
+        el.addEventListener('mouseup', stopAction);
+
+        // LA CLAVE: Si el dedo/mouse sale del área del botón mientras está presionado, detenemos la acción.
+        el.addEventListener('pointerleave', stopAction);
+        el.addEventListener('pointercancel', stopAction);
+    };
+
+// --- SOPORTE GLOBAL (Por si el puntero se pierde) ---
+    // Si el usuario levanta el dedo en cualquier parte de la pantalla, reseteamos todo.
+    window.addEventListener('pointerup', () => {
+        if (keys.a || keys.d) {
+            keys.a = false;
+            keys.d = false;
+            updateMove();
+        }
+    });
+    // Vincular con los IDs del HTML
+    setupMobileBtn('btn-left', 'a');
+    setupMobileBtn('btn-right', 'd');
+    setupMobileBtn('btn-jump', null, true);
+
+    // --- 4. ACCIONES DE MUNDO (Clicks/Touches) ---
+    // Usamos pointerdown para unificar comportamiento en móviles y PC
+    canvas.addEventListener('pointerdown', (e) => {
+        // SEGURIDAD: Si tocamos la Hotbar o botones, no emitir click al mundo
+        if (e.target.closest('.mobile-btn') || e.target.closest('.item-slot')) return;
+        
+        const c = getCoords(e);
+        
+        // Determinar acción: Click derecho (2) siempre borra, si no, depende del modo
+        const isDelete = (e.button === 2 || window.gameMode === 'destroy');
+        const type = isDelete ? 'remove_block' : 'click';
+        
+        send({ type, x: c.x, y: c.y });
+    });
+
+    // --- 5. SINCRONIZACIÓN DE CURSOR ---
+    canvas.addEventListener('pointermove', (e) => {
+        const c = getCoords(e);
+        send({ type: 'cursor', x: c.x, y: c.y });
+    });
+
+    // --- 6. SOPORTE TECLADO ---
+    window.onkeydown = (e) => {
+        const k = e.key.toLowerCase();
+        if (k === 'a' || k === 'arrowleft') { keys.a = true; updateMove(); }
+        if (k === 'd' || k === 'arrowright') { keys.d = true; updateMove(); }
+        if (k === 'w' || k === ' ' || k === 'arrowup') send({ type: 'jump_trigger' });
+    };
+    window.onkeyup = (e) => {
+        const k = e.key.toLowerCase();
+        if (k === 'a' || k === 'arrowleft') { keys.a = false; updateMove(); }
+        if (k === 'd' || k === 'arrowright') { keys.d = false; updateMove(); }
+    };
+}
+// el 1, 2, y 3 son separados. pero en el procesado se juntan y se formaten para lograr la interacion online, la cual ya esta hecho.
+Resultado: juego 2d fluido, donde no hay retrasos en los input y jugable, escalable.

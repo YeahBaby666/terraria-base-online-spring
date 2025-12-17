@@ -71,4 +71,8 @@ public class GameRoomService {
     public Optional<GameRoom> findRoomById(String roomId) {
         return gameRoomRepository.findById(roomId);
     }
+
+    public Optional<GameRoom> findRoomByName(String roomName) {
+        return gameRoomRepository.findByName(roomName);
+    }
 }

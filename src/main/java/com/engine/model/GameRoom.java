@@ -15,7 +15,7 @@ public class GameRoom {
     @Column(nullable = false)
     private String id; 
 
-    @Column(nullable = false)
+    @Column(nullable = false, unique = true)
     private String name;
 
     @Column(name = "server_logic", columnDefinition = "TEXT")
