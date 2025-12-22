@@ -16,7 +16,6 @@ import org.springframework.beans.factory.annotation.Value;
 import java.util.List;
 import java.util.Optional;
 
-
 @Controller
 public class WebController {
 
@@ -106,6 +105,11 @@ public class WebController {
                 model.addAttribute("clientStructureHtml", gr.getClientStructureHtml());
                 model.addAttribute("clientRenderScript", gr.getClientRenderScript());
                 model.addAttribute("clientInputScript", gr.getClientInputScript());
+
+                // --- CAMBIO CLAVE: Enviar el estado real ---
+                // Si es null, enviamos un objeto vacío válido para evitar errores en JS
+                String stateJson = (gr.getGameStateData() != null) ? gr.getGameStateData() : "{}";
+                model.addAttribute("gameStateData", stateJson);
 
             } else {
                 model.addAttribute("errorMessage", "Sala no encontrada.");

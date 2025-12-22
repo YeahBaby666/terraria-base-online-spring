@@ -1,0 +1,168 @@
+// ==========================================
+// 1. CONFIGURACIÓN (BINDS)
+// ==========================================
+// Vinculamos nombres lógicos a teclas físicas
+Client.bind('Saltar', 'Space');
+Client.bind('Agacharse', 'ControlLeft');
+Client.bind('AccionPrincipal', 'LeftClick'); // Funciona para Mouse Izq y Toque en pantalla
+
+console.log("🎮 Input System Listo. Prueba teclas, mouse y touch.");
+
+window.onInputLoop = () => {
+    
+    // ==========================================
+    // A. DETECTOR DE CUALQUIER TECLA (RAW - ONE SHOT)
+    // ==========================================
+    // Útil para escribir en chat, abrir menús ocultos o debugear
+    Client.frameKeys.forEach(code => {
+        console.log(`🎹 Tecla nueva detectada: ${code}`);
+        
+        if (code === 'KeyM') console.log("🗺️ Abriendo Mapa (Detectado por Raw)");
+        if (code === 'Escape') console.log("⚙️ Pausando Juego");
+    });
+
+    // ==========================================
+    // B. TECLAS MANTENIDAS POR ALIAS (isPress)
+    // ==========================================
+    // Devuelve TRUE mientras mantengas la tecla pulsada
+    
+    if (Client.isPress('Saltar')) {
+        // Ejemplo: Cargar una barra de fuerza
+        console.log("🔋 Cargando potencia de salto...");
+    }
+
+    if (Client.isPress('Agacharse')) {
+        console.log("🕵️ Caminando sigilosamente...");
+    }
+
+    // ==========================================
+    // C. TECLAS ÚNICAS POR ALIAS (isJustPressed)
+    // ==========================================
+    // Devuelve TRUE solo en el primer frame que presionas
+    
+    if (Client.isJustPressed('Saltar')) {
+        console.log("🦘 ¡EJECUTAR SALTO AHORA!");
+        Client.emit('action_jump', {}); //Enviar el paquete al servidor: {} vacío por el momento
+    }
+
+    // ==========================================
+    // D. TECLAS FÍSICAS MANTENIDAS (isKeyDown)
+    // ==========================================
+    // Si no quieres crear Binds y prefieres usar códigos directos (WASD)
+    // Variables para recordar el último envío y no saturar la red
+    // (Se guardan en window para persistir entre frames)
+    
+    window.lastSentmoveX = 0;
+    window.lastSentmoveY = 0;
+    
+    let moveX = 0;
+    let moveY = 0;
+
+    if (Client.isKeyDown('KeyW') || Client.isKeyDown('ArrowUp'))    moveY = -1;
+    if (Client.isKeyDown('KeyS') || Client.isKeyDown('ArrowDown'))  moveY = 1;
+    if (Client.isKeyDown('KeyA') || Client.isKeyDown('ArrowLeft'))  moveX = -1;
+    if (Client.isKeyDown('KeyD') || Client.isKeyDown('ArrowRight')) moveX = 1;
+        
+    // Aquí es donde simulamos el evento "Soltar Tecla".
+    // Si moveX pasa de 1 a 0, significa que soltaste la tecla.
+    
+    // ¿Ha cambiado mi intención de movimiento desde el último paquete enviado?
+    if (moveX !== window.lastSentmoveX || moveY !== window.lastSentmoveY ) {
+        
+        console.log(`📡 Cambio de Movimiento: X:${moveX} Y:${moveY}`);
+        
+        // Enviamos al servidor
+        Client.emit('action_move', { vx: moveX , vy: moveY });
+        
+        // Actualizamos la memoria para no volver a enviar lo mismo en el siguiente frame
+        window.lastSentmoveX = moveX;
+        window.lastSentmoveY = moveY;  
+        /*
+        Presionas W -> Se envía {vy: -1} una sola vez.
+
+	Mantienes W -> No se envía nada (el servidor asume que sigues moviéndote).
+
+	Sueltas W -> vy vuelve a ser 0 (el "else implícito"). Es diferente al anterior (-1). Se envía {vy: 0} una sola vez.
+       */
+    }
+
+    // ==========================================
+    // E. MOUSE Y TOUCH (UNIFICADO)
+    // ==========================================
+    // El motor actualiza 'Client.worldMouse' tanto con el mouse como con el dedo
+    const pointer = Client.worldMouse;
+
+    // 1. Detectar "Clic" o "Toque" mantenido (Ráfaga)
+    if (Client.isPress('AccionPrincipal')) {
+        // Esto funciona si haces clic sostenido O si dejas el dedo en la pantalla
+        console.log(`🔥 Disparando ráfaga hacia: ${Math.round(pointer.x)}, ${Math.round(pointer.y)}`);
+    }
+
+    // 2. Detectar "Clic" o "Toque" único (Disparo preciso)
+    if (Client.isJustPressed('AccionPrincipal')) {
+        console.log(`💥 DISPARO ÚNICO en X:${Math.round(pointer.x)} Y:${Math.round(pointer.y)}`);
+        
+        // Ejemplo: Crear efecto visual inmediato
+        if (Client.spawnParticle) {
+            Client.spawnParticle({ x: pointer.x, y: pointer.y, color: 'orange', speed: 8, life: 0.5 });
+        }
+        
+        Client.emit('shoot_event', { x: pointer.x, y: pointer.y });
+    }
+
+    // 3. Clic Derecho (Solo Mouse generalmente)
+    if (Client.isJustPressed('RightClick')) {
+        console.log("🛡️ Bloquear / Menú Contextual");
+    }
+    
+    // ==========================================
+    // F. TECLAS ESPECIALES Y MODIFICADORES
+    // ==========================================
+
+    // 1. CORRER (Shift)
+    // El engine detecta automáticamente 'ShiftLeft' o 'ShiftRight' si pides 'Shift'
+    if (Client.isPress('Shift')) {
+        // Lógica de juego: Si me muevo y presiono Shift -> Correr
+        if (moveX !== 0 || moveY !== 0) { // moveX/Y definidos en sección D
+            console.log("💨 MODO CORRER ACTIVO");
+            Client.emit('action_sprint', { active: true });
+        }
+    }
+
+    // 2. AGACHARSE (Control)
+    // Aquí usamos el código físico específico para diferenciar izq/der si queremos
+    if (Client.isKeyDown('ControlLeft')) {
+        console.log("⬇️ Agachado (Ctrl Izquierdo)");
+    }
+
+    // 3. TECLAS DE SISTEMA (Enter, Escape, Backspace)
+    // Usamos frameKeys para detectar el "golpe" exacto sin configurar Binds
+    Client.frameKeys.forEach(code => {
+        
+        if (code === 'Enter') {
+            console.log("💬 [SISTEMA] Abrir caja de Chat");
+            // Client.emit('ui_open_chat');
+        }
+
+        if (code === 'Escape') {
+            console.log("⚙️ [SISTEMA] Pausa / Menú Principal");
+        }
+
+        if (code === 'Tab') {
+            console.log("📊 [SISTEMA] Mostrar Scoreboard / Inventario");
+            // return; // Evita el comportamiento por defecto del navegador si es necesario
+        }
+    });
+
+    // ==========================================
+    // G. DEBUG: MONITOR DE ESTADO
+    // ==========================================
+    // (Opcional) Descomenta esto para ver en tiempo real TODO lo que está presionado
+    /*
+    const allKeys = Object.keys(Client.inputState.keys).filter(k => Client.inputState.keys[k]);
+    if (allKeys.length > 0) {
+        console.log("Teclas Activas:", allKeys.join(', '));
+    }
+    */
+};
+};

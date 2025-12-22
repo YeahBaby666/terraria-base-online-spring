@@ -4,36 +4,59 @@
 <head>
     <meta charset="UTF-8">
     <title>Jugar - Engine IO</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
+    <script src="https://unpkg.com/simple-peer@9.11.1/simplepeer.min.js"></script>
     <style>
         body {
             margin: 0;
-            background: #000;
-            color: #fff;
-            font-family: sans-serif;
+            background: #111;
             overflow: hidden;
-            height: 100vh;
-            display: flex;
-            align-items: center;
-            justify-content: center;
+            user-select: none;
+            font-family: 'Segoe UI', sans-serif;
+            touch-action: none;
+        }
+
+        canvas {
+            display: block;
+            position: absolute;
+            top: 0;
+            left: 0;
+            z-index: 0;
+        }
+
+        #ui-layer {
+            position: absolute;
+            inset: 0;
+            z-index: 10;
+            pointer-events: none;
+        }
+
+        #ui-layer * {
+            pointer-events: auto;
         }
 
         #loader {
-            text-align: center;
-            z-index: 10;
+            position: absolute;
+            inset: 0;
+            background: #0f172a;
+            color: white;
+            z-index: 20;
             display: flex;
             flex-direction: column;
+            justify-content: center;
             align-items: center;
+            transition: opacity 0.5s;
         }
 
         .spinner {
-            border: 4px solid rgba(255, 255, 255, 0.3);
+            border: 4px solid rgba(255, 255, 255, 0.1);
             border-radius: 50%;
-            border-top: 4px solid #3b82f6;
+            border-top: 4px solid #4ade80;
             width: 40px;
             height: 40px;
-            animation: spin 1s linear infinite;
-            margin-bottom: 10px;
+            animation: spin 0.8s linear infinite;
+            margin-bottom: 15px;
         }
 
         @keyframes spin {
@@ -45,14 +68,6 @@
                 transform: rotate(360deg);
             }
         }
-
-        #game-stage {
-            width: 100%;
-            height: 100%;
-            display: none;
-            position: absolute;
-            inset: 0;
-        }
     </style>
 </head>
 
@@ -60,119 +75,550 @@
 
     <div id="loader">
         <div class="spinner"></div>
-        <div id="status">Conectando al servidor...</div>
+        <div id="status">Conectando...</div>
     </div>
-
-    <div id="game-stage">
-        <div id="injected-html" th:utext="${clientStructureHtml}"></div>
-    </div>
-
-    <script id="initial-render-script" th:utext="'{ ' + ${clientRenderScript} + ' }'"></script>
-    <script id="initial-input-script" th:utext="'{ ' + ${clientInputScript} + ' }'"></script>
+    <canvas id="gameCanvas"></canvas>
+    <div id="ui-layer" th:utext="${clientStructureHtml}"></div>
 
     <script>
-        const body = document.body;
-        const ROOM_ID = body.dataset.roomId;
-        const USER_NAME = body.dataset.userName || 'Anon_' + Math.floor(Math.random() * 1000);
-        const API_BASE_URL = body.dataset.apiBase || 'http://localhost:3000';
-
-        let socket;
-        window.USER_NAME = USER_NAME;
-        window.LAST_STATE = {};
-
-        // Interface para enviar datos al servidor
-        window.SIM_emit = function (payload) {
-            if (socket && socket.connected) {
-                socket.emit('sim_input', payload);
+    // ==========================================
+    // 0. UTILIDADES DE RENDIMIENTO (SPATIAL HASH)
+    // ==========================================
+    class SpatialHash {
+        constructor(cellSize) {
+            this.cellSize = cellSize;
+            this.grid = new Map();
+        }
+        clear() { this.grid.clear(); }
+        _key(x, y) {
+            return `${Math.floor(x / this.cellSize)},${Math.floor(y / this.cellSize)}`;
+        }
+        insert(obj) {
+            const key = this._key(obj.x, obj.y);
+            if (!this.grid.has(key)) this.grid.set(key, []);
+            this.grid.get(key).push(obj);
+        }
+        getNearby(obj) {
+            const objects = [];
+            const cx = Math.floor(obj.x / this.cellSize);
+            const cy = Math.floor(obj.y / this.cellSize);
+            for (let x = cx - 1; x <= cx + 1; x++) {
+                for (let y = cy - 1; y <= cy + 1; y++) {
+                    const key = `${x},${y}`;
+                    if (this.grid.has(key)) objects.push(...this.grid.get(key));
+                }
             }
-        };
+            return objects;
+        }
+    }
 
-        // --- GESTIÓN DE INYECCIÓN ---
-        function injectNewDesign(content) {
-            console.log("♻️ Actualizando diseño...");
-
-            // 1. Limpiar scripts dinámicos previos
-            document.querySelectorAll('.game-dynamic-script').forEach(s => s.remove());
-
-            // 2. Inyectar HTML
-            const stage = document.getElementById('injected-html');
-            stage.innerHTML = content.structure;
-
-            // 3. Inyectar JS
-            const scripts = [content.renderScript, content.inputScript];
-            scripts.forEach(code => {
-                const scriptEl = document.createElement('script');
-                scriptEl.className = 'game-dynamic-script';
-                scriptEl.textContent = `{ ${code} }`;
-                document.body.appendChild(scriptEl);
-            });
-
-            console.log("✅ Scripts re-inyectados.");
-
-            // CORRECCIÓN: Asegurar que el loader siga oculto y el juego visible
-            document.getElementById('loader').style.display = 'none';
-            document.getElementById('game-stage').style.display = 'block';
+    // ==========================================
+    // 1. RENDER ENGINE (GRÁFICOS Y CANVAS)
+    // ==========================================
+    class Render {
+        constructor(engine) {
+            this.engine = engine; // Referencia al cerebro (para cámara y assets)
+            this.canvas = document.getElementById('gameCanvas');
+            this.ctx = this.canvas.getContext('2d', { alpha: false });
+            this.width = 0; 
+            this.height = 0;
+            
+            // Sistema de Video y Partículas
+            this.particles = [];
+            
+            this.initSystem();
+            this.startLoop();
         }
 
-        // --- CONEXIÓN SOCKET.IO ---
-        async function init() {
-            console.log(`📡 Conectando a ${API_BASE_URL}...`);
+        initSystem() {
+            const updateSize = () => {
+                this.width = window.innerWidth;
+                this.height = window.innerHeight;
+                this.canvas.width = this.width;
+                this.canvas.height = this.height;
+                this.ctx.imageSmoothingEnabled = false;
+                // Actualizar dimensiones en el motor lógico si es necesario
+                this.engine.width = this.width;
+                this.engine.height = this.height;
+            };
+            window.addEventListener('resize', updateSize);
+            updateSize();
+        }
 
-            socket = io(API_BASE_URL, {
-                transports: ['websocket'],
-                upgrade: false
-            });
+        startLoop() {
+            const loop = () => {
+                this.engine.updateCamera(); // La cámara es lógica, pero afecta al render
+                if (window.onRender) window.onRender(); // Hook del usuario
+                requestAnimationFrame(loop);
+            };
+            requestAnimationFrame(loop);
+        }
 
-            socket.on('connect', () => {
-                // Solo mostrar "Entrando..." si es la primera vez (loader visible)
-                if (document.getElementById('loader').style.display !== 'none') {
-                    document.getElementById('status').innerText = "Entrando a la sala...";
-                }
-                socket.emit('join_room', ROOM_ID, USER_NAME);
-            });
+        // --- MÉTODOS DE DIBUJO (API PÚBLICA) ---
 
-            socket.on('state_update', (serverState) => {
-                // Ocultar loader SIEMPRE que recibamos datos (Autocorrección)
-                const loader = document.getElementById('loader');
-                const stage = document.getElementById('game-stage');
+        drawRect(x, y, w, h, c) {
+            this.ctx.fillStyle = c;
+            this.ctx.fillRect(
+                Math.floor(x - this.engine.camera.x), 
+                Math.floor(y - this.engine.camera.y), 
+                w, h
+            );
+        }
 
-                if (loader.style.display !== 'none') {
-                    loader.style.display = 'none';
-                    stage.style.display = 'block';
-                }
+        drawRotatedRect(x, y, w, h, color, angle) {
+            const rx = Math.floor(x - this.engine.camera.x);
+            const ry = Math.floor(y - this.engine.camera.y);
+            // Culling
+            if (rx + w < 0 || rx > this.width || ry + h < 0 || ry > this.height) return;
 
-                // EJECUCIÓN CLAVE: Buscar la función en el objeto window
-                if (typeof window.onRender === 'function') {
-                    try {
-                        window.onRender(serverState);
-                    } catch (e) {
-                        console.error("Error en window.onRender:", e);
+            this.ctx.save();
+            this.ctx.translate(rx + w / 2, ry + h / 2);
+            this.ctx.rotate(angle);
+            this.ctx.fillStyle = color;
+            this.ctx.fillRect(-w / 2, -h / 2, w, h);
+            this.ctx.restore();
+        }
+
+        drawText(text, x, y, color = 'white', size = 16) {
+            this.ctx.fillStyle = color;
+            this.ctx.font = `bold ${size}px sans-serif`;
+            this.ctx.fillText(
+                text, 
+                Math.floor(x - this.engine.camera.x), 
+                Math.floor(y - this.engine.camera.y)
+            );
+        }
+
+        // --- IMÁGENES Y SPRITES ---
+
+        createStaticSprite(name, w, h, drawFn) {
+            const offCanvas = document.createElement('canvas');
+            offCanvas.width = w; offCanvas.height = h;
+            const offCtx = offCanvas.getContext('2d');
+            drawFn(offCtx);
+            this.engine.assets.images[name] = offCanvas; // Guardamos en assets compartidos
+        }
+
+        drawSprite(name, x, y, w, h, angle = 0) {
+            const img = this.engine.assets.images[name];
+            if (!img) return;
+
+            const rx = Math.floor(x - this.engine.camera.x);
+            const ry = Math.floor(y - this.engine.camera.y);
+            if (rx + w < 0 || rx > this.width || ry + h < 0 || ry > this.height) return;
+
+            this.ctx.save();
+            this.ctx.translate(rx + w / 2, ry + h / 2);
+            if (angle !== 0) this.ctx.rotate(angle);
+            this.ctx.drawImage(img, -w / 2, -h / 2, w, h);
+            this.ctx.restore();
+        }
+
+        // --- MAPA ---
+
+        prerenderMap(mapData, totalW, totalH) {
+            const mapCanvas = document.createElement('canvas');
+            mapCanvas.width = totalW; mapCanvas.height = totalH;
+            const mCtx = mapCanvas.getContext('2d');
+            for (const b of mapData) {
+                mCtx.fillStyle = b.color || '#444';
+                mCtx.fillRect(b.x, b.y, b.w, b.h);
+            }
+            this.engine.assets.images['FULL_MAP'] = mapCanvas;
+        }
+
+        drawMap() {
+            const mapImg = this.engine.assets.images['FULL_MAP'];
+            if (!mapImg) return;
+            this.ctx.drawImage(
+                mapImg,
+                this.engine.camera.x, this.engine.camera.y, this.width, this.height,
+                0, 0, this.width, this.height
+            );
+        }
+
+        renderWorld(tileSize = 40) {
+            const cam = this.engine.camera;
+            const sx = Math.floor(cam.x / tileSize) - 1;
+            const sy = Math.floor(cam.y / tileSize) - 1;
+            const ex = sx + Math.ceil(this.width / tileSize) + 2;
+            const ey = sy + Math.ceil(this.height / tileSize) + 2;
+
+            for (let y = sy; y <= ey; y++) {
+                for (let x = sx; x <= ex; x++) {
+                    const instr = this.engine.worldMap.get(`${x},${y}`);
+                    if (!instr) continue;
+
+                    const rx = x * tileSize - (cam.x + cam.shake.x);
+                    const ry = y * tileSize - (cam.y + cam.shake.y);
+
+                    this.ctx.fillStyle = instr.color;
+                    if (instr.shape === 'rect') this.ctx.fillRect(rx, ry, tileSize, tileSize);
+                    if (instr.shape === 'circle') {
+                        this.ctx.beginPath();
+                        this.ctx.arc(rx + tileSize / 2, ry + tileSize / 2, tileSize / 2 - 2, 0, Math.PI * 2);
+                        this.ctx.fill();
                     }
                 }
-            });
+            }
+        }
 
-            socket.on('design_update', (data) => {
-                injectNewDesign(data);
-            });
+        // --- VIDEO ---
 
-            socket.on('disconnect', (reason) => {
-                console.warn("Desconectado:", reason);
-                // Solo mostrar pantalla de carga si fue una desconexión real de red,
-                // no si fue por un reinicio rápido del servidor (io server disconnect)
-                if (reason === "io server disconnect") {
-                    // El servidor nos echó (probablemente reinicio de lógica), reconectar manual
-                    socket.connect();
-                } else {
-                    // Fallo de red real
-                    document.getElementById('loader').style.display = 'flex';
-                    document.getElementById('game-stage').style.display = 'none'; // Ocultar juego
-                    document.getElementById('status').innerText = "Reconectando...";
-                }
+        loadVideo(name, source) {
+            if (this.engine.assets.videos[name]) return;
+            const vid = document.createElement('video');
+            vid.autoplay = true; vid.muted = true; vid.loop = true; vid.controls = false;
+            vid.setAttribute('playsinline', ''); vid.crossOrigin = "anonymous";
+            const sTag = document.createElement('source');
+            sTag.src = source; sTag.type = 'video/mp4';
+            vid.appendChild(sTag);
+            
+            const forcePlay = () => { if (vid.paused) vid.play(); };
+            ['mousedown', 'touchstart', 'keydown'].forEach(e => window.addEventListener(e, forcePlay));
+            
+            this.engine.assets.videos[name] = vid;
+            vid.load();
+        }
+
+        drawVideo(name, x, y, w, h, opacity = 1.0) {
+            const vid = this.engine.assets.videos[name];
+            if (!vid || vid.readyState < 2) return;
+            this.ctx.save();
+            this.ctx.globalAlpha = opacity;
+            this.ctx.drawImage(vid, Math.floor(x - this.engine.camera.x), Math.floor(y - this.engine.camera.y), w, h);
+            this.ctx.restore();
+        }
+
+        // --- PARTÍCULAS ---
+
+        initParticlePool(count) {
+            this.particles = Array.from({ length: count }, () => ({
+                active: false, x: 0, y: 0, vx: 0, vy: 0,
+                life: 0, maxLife: 0, size: 0, color: '', gravity: 0
+            }));
+        }
+
+        spawnParticle(config) {
+            const p = this.particles.find(p => !p.active);
+            if (!p) return;
+            Object.assign(p, {
+                active: true, x: config.x, y: config.y,
+                vx: config.vx || (Math.random() - 0.5) * (config.speed || 5),
+                vy: config.vy || (Math.random() - 0.5) * (config.speed || 5),
+                life: config.life || 1.0, maxLife: config.life || 1.0,
+                size: config.size || 3, color: config.color || '#fff',
+                gravity: config.gravity || 0, restitution: config.restitution || 0.8
             });
         }
 
-        window.onload = init;
+        updateParticles() {
+            // Lógica física simple integrada en render para efectos visuales
+            for (const p of this.particles) {
+                if (!p.active) continue;
+                p.life -= 0.016;
+                if (p.life <= 0) { p.active = false; continue; }
+                p.vy += p.gravity;
+                p.x += p.vx;
+                p.y += p.vy;
+            }
+        }
+
+        drawParticles() {
+            for (const p of this.particles) {
+                if (!p.active) continue;
+                this.ctx.globalAlpha = p.life / p.maxLife;
+                this.ctx.fillStyle = p.color;
+                this.ctx.fillRect(
+                    Math.floor(p.x - this.engine.camera.x), 
+                    Math.floor(p.y - this.engine.camera.y), 
+                    p.size, p.size
+                );
+            }
+            this.ctx.globalAlpha = 1.0;
+        }
+    }
+
+    // ==========================================
+    // 2. CLIENT ENGINE (LÓGICA, RED, AUDIO)
+    // ==========================================
+    class ClientEngine {
+        constructor() {
+            this.socket = null;
+            this.myId = null;
+            this.myPlayer = null;
+            this.width = 0; this.height = 0; // Se actualizan desde Render
+            
+            this.assets = { images: {}, sounds: {}, videos: {} };
+            this.inputState = { keys: {}, mouse: { x: 0, y: 0, down: false } };
+            this.lastInputState = { keys: {}, mouse: { down: false } };
+            this.actions = {};
+            this.frameKeys = []; // Buffer de teclas RAW
+
+            // AUDIO
+            this.audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            this.audioBuffers = {};
+
+            // RED
+            this.netRate = 30;
+            this.netBuffer = {};
+            this.interpDelay = 100;
+            this.netInterval = 1000 / this.netRate;
+            this.lastNetTime = 0;
+            this.inputQueue = { move: null, actions: [] };
+
+            // ESTADO MUNDO
+            this.worldMap = new Map();
+            this.camera = { x: 0, y: 0, targetX: 0, targetY: 0, lerp: 0.1, shake: { x: 0, y: 0, intensity: 0 } };
+            
+            this.mouseScreen = { x: 0, y: 0 };
+            this.eventListeners = [];
+
+            // INICIALIZACIÓN
+            this.render = new Render(this); // Vinculamos Render
+            this.initInputSystem();
+            this.startInputLoop();
+        }
+
+        // --- PROXIES AL RENDER ---
+        get ctx() { return this.render.ctx; } // Retrocompatibilidad
+        get canvas() { return this.render.canvas; }
+        
+        // Exponemos métodos de render para que los scripts de usuario los usen via 'Client'
+        drawRect(...args) { this.render.drawRect(...args); }
+        drawText(...args) { this.render.drawText(...args); }
+        drawVideo(...args) { this.render.drawVideo(...args); }
+        renderWorld(...args) { this.render.renderWorld(...args); }
+        spawnParticle(...args) { this.render.spawnParticle(...args); }
+        drawParticles() { this.render.drawParticles(); }
+        updateParticles() { this.render.updateParticles(); }
+        loadVideo(...args) { this.render.loadVideo(...args); }
+
+        // --- SISTEMA DE INPUT ---
+        initInputSystem() {
+            window.addEventListener('keydown', e => {
+                this.inputState.keys[e.code] = true;
+                if (!e.repeat) this.frameKeys.push(e.code);
+            });
+            window.addEventListener('keyup', e => this.inputState.keys[e.code] = false);
+
+            window.addEventListener('mousemove', e => {
+                this.mouseScreen.x = e.clientX;
+                this.mouseScreen.y = e.clientY;
+                this.updateMouseWorld();
+            });
+
+            window.addEventListener('mousedown', () => this.inputState.mouse.down = true);
+            window.addEventListener('mouseup', () => this.inputState.mouse.down = false);
+            window.addEventListener('contextmenu', e => e.preventDefault());
+
+            const handleTouch = (e) => {
+                if (e.touches.length > 0) {
+                    const r = this.render.canvas.getBoundingClientRect();
+                    const t = e.touches[0];
+                    this.mouseScreen.x = t.clientX - r.left;
+                    this.mouseScreen.y = t.clientY - r.top;
+                    this.updateMouseWorld();
+                }
+            };
+            window.addEventListener('touchstart', e => { this.inputState.mouse.down = true; handleTouch(e); }, {passive:false});
+            window.addEventListener('touchmove', e => { if(e.target===this.render.canvas) e.preventDefault(); handleTouch(e); }, {passive:false});
+            window.addEventListener('touchend', e => { if(e.touches.length===0) this.inputState.mouse.down = false; });
+        }
+
+        updateMouseWorld() {
+            this.inputState.mouse.x = this.mouseScreen.x + this.camera.x;
+            this.inputState.mouse.y = this.mouseScreen.y + this.camera.y;
+        }
+
+        startInputLoop() {
+            setInterval(() => {
+                if (window.onInputLoop) {
+                    try { window.onInputLoop(); } catch (e) { console.error("Input Error:", e); }
+                }
+                this.updateInputSnapshots();
+            }, 16);
+        }
+
+        updateInputSnapshots() {
+            this.lastInputState.keys = { ...this.inputState.keys };
+            this.lastInputState.mouse.down = this.inputState.mouse.down;
+            this.frameKeys = [];
+        }
+
+        // --- UTILS INPUT ---
+        bind(name, key) { this.actions[name] = key; }
+        isPress(id) {
+            const target = this.actions[id] || id;
+
+            // Mapeos especiales de Mouse
+            if (target === 'LeftClick') return this.inputState.mouse.down;
+            if (target === 'RightClick') return !!this.inputState.mouse.rightDown;
+            
+            // Mapeos especiales de Teclado
+            if (target === 'Shift') return !!this.inputState.keys['ShiftLeft'] || !!this.inputState.keys['ShiftRight'];
+
+            // Verificación normal
+            return !!this.inputState.keys[target];
+        }
+        isKeyDown(code) { return !!this.inputState.keys[code]; }        
+        isJustPressed(id) {
+            const target = this.actions[id] || id;
+
+            if (target === 'LeftClick') return this.inputState.mouse.down && !this.lastInputState.mouse.down;
+            if (target === 'RightClick') return !!this.inputState.mouse.rightDown && !this.lastInputState.mouse.rightDown;
+
+            return !!this.inputState.keys[target] && !this.lastInputState.keys[target];
+        }
+        get worldMouse() { return this.inputState.mouse; }
+        worldToGrid(wx, wy, tileSize = 40) { return { tx: Math.floor(wx/tileSize), ty: Math.floor(wy/tileSize) }; }
+
+        // --- CÁMARA ---
+        setCamera(pos, lerp = null, mapUpdate = null) {
+            if (pos) { this.camera.targetX = pos.x - this.width/2; this.camera.targetY = pos.y - this.height/2; }
+            if (lerp !== null) this.camera.lerp = lerp;
+            if (mapUpdate && mapUpdate.length > 0) {
+                for (let i = 0; i < mapUpdate.length; i += 3) 
+                    this.worldMap.set(`${mapUpdate[i]},${mapUpdate[i+1]}`, mapUpdate[i+2]);
+            }
+        }
+
+        updateCamera() {
+            this.camera.x += (this.camera.targetX - this.camera.x) * this.camera.lerp;
+            this.camera.y += (this.camera.targetY - this.camera.y) * this.camera.lerp;
+            // Shake logic
+            if (this.camera.shake.intensity > 0.1) {
+                this.camera.shake.x = (Math.random()-0.5)*this.camera.shake.intensity;
+                this.camera.shake.y = (Math.random()-0.5)*this.camera.shake.intensity;
+                this.camera.shake.intensity *= 0.9;
+            } else { this.camera.shake.x = 0; this.camera.shake.y = 0; }
+        }
+        get cx() { return Math.round(this.camera.x + this.camera.shake.x); }
+        get cy() { return Math.round(this.camera.y + this.camera.shake.y); }
+
+        // --- RED ---
+        emit(type, payload = {}) {
+            if (!this.socket) return;
+            if (!payload.id) payload.id = this.myId;
+            if (type === 'action_move') this.inputQueue.move = payload;
+            else this.inputQueue.actions.push({ type, payload });
+
+            const now = performance.now();
+            if (now - this.lastNetTime > this.netInterval) {
+                this._flushNetwork();
+                this.lastNetTime = now;
+            }
+        }
+
+        _flushNetwork() {
+            if (!this.inputQueue.move && this.inputQueue.actions.length === 0) return;
+            const packet = {};
+            if (this.inputQueue.move) { packet.m = this.inputQueue.move; this.inputQueue.move = null; }
+            if (this.inputQueue.actions.length > 0) { packet.a = this.inputQueue.actions; this.inputQueue.actions = []; }
+            this.socket.emit('client_tick', packet);
+        }
+
+        on(event, callback) {
+            if (this.socket) this.socket.on(event, callback);
+            else this.eventListeners.push({ event, callback });
+        }
+
+        // --- AUDIO ---
+        async loadSound(name, src) {
+            try {
+                const res = await fetch(src);
+                this.audioBuffers[name] = await this.audioCtx.decodeAudioData(await res.arrayBuffer());
+            } catch (e) { console.error("Audio error", e); }
+        }
+
+        playSound(name, vol = 1.0) {
+            const buf = this.audioBuffers[name];
+            if (!buf) return;
+            if (this.audioCtx.state === 'suspended') this.audioCtx.resume();
+            const src = this.audioCtx.createBufferSource();
+            const gain = this.audioCtx.createGain();
+            src.buffer = buf; gain.gain.value = vol;
+            src.connect(gain); gain.connect(this.audioCtx.destination);
+            src.start(0);
+        }
+    }
+
+    const Client = new ClientEngine();    
+</script>
+
+    <script id="initial-render" th:utext="'{ ' + ${clientRenderScript} + ' }'"></script>
+    <script id="initial-input" th:utext="'{ ' + ${clientInputScript} + ' }'"></script>
+
+    <script>
+        // ==========================================
+        // BOOTSTRAPPER (INICIO DEL JUEGO)
+        // ==========================================
+        const body = document.body;
+        const ROOM_ID = body.dataset.roomId;
+        // Si no hay usuario, generamos uno temporal
+        const USER_NAME = body.dataset.userName || 'Anon_' + Math.floor(Math.random() * 1000);
+        const API_BASE = body.dataset.apiBase;
+
+        // Inyector de código dinámico
+        function injectScripts(data) {
+            document.getElementById('loader').style.display = 'none';
+            document.getElementById('status').innerText = "";
+            if (data.structure) document.getElementById('ui-layer').innerHTML = data.structure;
+
+            // Remover scripts viejos si existieran
+            document.querySelectorAll('.dynamic-code').forEach(el => el.remove());
+
+            // Inyectar nuevos
+            [data.renderScript, data.inputScript].forEach(code => {
+                if (!code) return;
+                const s = document.createElement('script');
+                s.className = 'dynamic-code';
+                s.textContent = `{ ${code} }`;
+                document.body.appendChild(s);
+            });
+            console.log("🛠️ Código inyectado.");
+        }
+
+
+        function initGame() {
+            const socket = io(API_BASE, { query: { roomId: ROOM_ID } });
+            Client.socket = socket;
+
+            socket.on('connect', () => {
+                console.log("✅ Conectado. Mi ID:", USER_NAME);
+                Client.myId = USER_NAME;
+                socket.emit('join_room', ROOM_ID, USER_NAME);
+                document.getElementById('loader').style.display = 'none';
+                document.getElementById('status').innerText = "";
+            });
+
+            // Recarga de código en caliente (Hot Reload)
+            socket.on('design_update', (data) => {
+                Client.netBuffer = {}; // Limpiar interpolación vieja
+                injectScripts(data);
+            });
+
+            // Manejo de desconexión
+            socket.on('disconnect', () => {
+                console.warn("⚠️ Desconectado del servidor.");
+                // Opcional: Mostrar loader de nuevo o un aviso
+                document.getElementById('loader').style.display = 'flex';
+                document.getElementById('status').innerText = "Reconectando...";
+
+            });
+
+            // Cargar scripts iniciales (si vienen del HTML server-side)
+            const initialData = {
+                structure: null, // Ya está en el HTML
+                renderScript: document.getElementById('initial-render').textContent,
+                inputScript: document.getElementById('initial-input').textContent
+            };
+            injectScripts(initialData);
+        }
+
+        window.onload = initGame;
     </script>
+
 </body>
 
 </html>

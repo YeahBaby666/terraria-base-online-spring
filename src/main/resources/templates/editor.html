@@ -2,276 +2,337 @@
 <html lang="es" xmlns:th="http://www.thymeleaf.org">
 
 <head>
-    <meta charset="UTF-8">
-    <title>Engine IO - Studio</title>
-    <script src="https://cdn.tailwindcss.com"></script>
-    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/themes/prism-tomorrow.min.css" rel="stylesheet" />
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/prism.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-javascript.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-markup.min.js"></script>
+
     <style>
+        :root {
+            --bg-main: #0a0f18;
+            --bg-panel: rgba(30, 41, 59, 0.7);
+            --accent: #3b82f6;
+            --neon-blue: #00f2ff;
+            --neon-purple: #bc13fe;
+            --border-color: #334155;
+            --text-dim: #94a3b8;
+        }
+
         body {
-            background: #0f172a;
-            color: #cbd5e1;
-            height: 100vh;
-            overflow: hidden;
-            display: flex;
-            flex-direction: column;
+            background-color: var(--bg-main);
+            background-image:
+                radial-gradient(circle at 50% 0%, rgba(59, 130, 246, 0.1) 0%, transparent 50%),
+                radial-gradient(circle at 100% 100%, rgba(188, 19, 254, 0.05) 0%, transparent 40%);
+            color: #f1f5f9;
         }
 
-        .glass-panel {
-            background: rgba(30, 41, 59, 0.9);
-            border-bottom: 1px solid #334155;
+        /* Navbar con efecto de cristal */
+        nav {
+            backdrop-filter: blur(10px);
+            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+            box-shadow: 0 4px 30px rgba(0, 0, 0, 0.5);
         }
 
-        /* Editor de Lógica Principal */
-        .code-area {
-            font-family: 'Consolas', 'Monaco', monospace;
-            background: #1e1e1e;
-            color: #d4d4d4;
-            resize: none;
-            border: none;
-            outline: none;
-            width: 100%;
-            height: 100%;
+        /* Contenedor de Editor */
+        .editor-container {
+            background: var(--bg-panel);
+            backdrop-filter: blur(4px);
+            border: 1px solid var(--border-color);
+            border-radius: 0 0 12px 12px;
+            box-shadow: inset 0 0 20px rgba(0, 0, 0, 0.2);
+            transition: all 0.3s ease;
         }
 
-        /* Paneles de Diseño (Estructura, Render, Input) */
-        .design-panel {
-            display: flex;
-            flex-direction: column;
-            height: 100%;
-            width: 100%;
+        .editor-container:focus-within {
+            border-color: var(--accent);
+            box-shadow: 0 0 15px rgba(59, 130, 246, 0.3);
         }
 
-        .design-section {
-            flex: 1; /* Esto hace que cada una de las 3 partes crezca equitativamente */
-            display: flex;
-            flex-direction: column;
-            border-bottom: 1px solid #334155;
-            min-height: 0; /* Evita que el flexbox se desborde */
+        /* Encabezados de Panel */
+        .panel-header {
+            background: linear-gradient(90deg, #1e293b 0%, #334155 100%);
+            border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+            padding: 8px 14px;
+            letter-spacing: 0.05em;
+            font-size: 10px;
         }
 
-        .design-label {
-            background: #252526;
-            padding: 4px 12px;
-            font-size: 11px;
-            font-weight: bold;
-            color: #858585;
-            text-transform: uppercase;
-            letter-spacing: 0.5px;
-            flex-shrink: 0;
-        }
-
-        .code-area-small {
-            flex-grow: 1;
-            background: #1e1e1e;
-            color: #d4d4d4;
-            font-family: 'Consolas', monospace;
+        /* Estilo del código (Prism) */
+        .code-editor {
+            font-family: 'JetBrains Mono', 'Fira Code', 'Consolas', monospace !important;
             font-size: 13px;
-            padding: 8px;
-            resize: none;
-            outline: none;
-            border: none;
+            line-height: 1.6;
+            caret-color: var(--neon-blue);
+            /* Cursor neón */
         }
 
-        .tab-active {
-            background: #1e1e1e;
-            border-top: 2px solid #3b82f6;
-            color: white;
+        /* Personalización de colores de Prism para el tema oscuro */
+        .token.function {
+            color: #7dd3fc;
         }
 
-        .tab-inactive {
-            background: #2d2d2d;
-            color: #6b7280;
+        .token.keyword {
+            color: #f472b6;
         }
 
-        ::-webkit-scrollbar { width: 8px; height: 8px; }
-        ::-webkit-scrollbar-thumb { background: #334155; border-radius: 4px; }
-        ::-webkit-scrollbar-thumb:hover { background: #475569; }
+        .token.string {
+            color: #a2f675;
+        }
 
+        .token.comment {
+            color: #64748b;
+            font-style: italic;
+        }
+
+        .token.operator {
+            color: #94a3b8;
+        }
+
+        .token.number {
+            color: #fbbf24;
+        }
+
+        /* Scrollbars Estilo Gamer */
+        ::-webkit-scrollbar {
+            width: 6px;
+            height: 6px;
+        }
+
+        ::-webkit-scrollbar-track {
+            background: #0f172a;
+        }
+
+        ::-webkit-scrollbar-thumb {
+            background: #334155;
+            border-radius: 10px;
+        }
+
+        ::-webkit-scrollbar-thumb:hover {
+            background: var(--accent);
+        }
+
+        /* Botones con Glow */
+        #btn-publish {
+            box-shadow: 0 0 10px rgba(59, 130, 246, 0.4);
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+
+        #btn-reset:hover {
+            background: rgba(239, 68, 68, 0.2);
+            border-color: #ef4444;
+            color: #ef4444;
+            box-shadow: 0 0 15px rgba(239, 68, 68, 0.3);
+        }
+
+        /* Paneles Laterales (Soon) */
+        .soon-panel {
+            border: 1px dashed rgba(148, 163, 184, 0.2);
+            background: rgba(15, 23, 42, 0.3);
+        }
     </style>
 </head>
 
-<body th:data-room-id="${roomId}" 
-      th:data-current-username="${currentUsername}" 
-      th:data-room-owner="${roomOwner}" 
-      th:data-api-base="${ApiBaseUrl}">
+<body th:data-room-id="${roomId}" th:data-api-base="${ApiBaseUrl}">
 
-    <header class="h-14 glass-panel flex items-center justify-between px-4 shrink-0 z-20">
-        <div class="flex items-center gap-4">
-            <a href="/" class="text-gray-400 hover:text-white font-bold text-sm"><i class="fa-solid fa-arrow-left"></i> SALIR</a>
-            <div class="h-6 w-px bg-gray-600"></div>
-            <div class="flex items-center gap-2">
-                <i class="fa-solid fa-cube text-blue-500"></i>
-                <span class="font-bold text-gray-200">Studio</span>
-                <span class="text-xs bg-gray-700 px-2 rounded" th:text="${currentUsername ?: 'Invitado'}">User</span>
-            </div>
+    <nav class="h-14 bg-slate-900 border-b border-slate-800 flex items-center justify-between px-6 shrink-0">
+        <div class="flex items-center gap-3">
+            <i class="fa-solid fa-layer-group text-blue-500 text-xl"></i>
+            <h1 class="font-bold text-lg tracking-wide">ENGINE<span class="font-light text-slate-400">STUDIO</span></h1>
+            <span class="text-xs bg-slate-800 px-2 py-1 rounded text-slate-500 ml-2" th:text="${roomId}">ROOM_ID</span>
         </div>
-        <div class="flex items-center gap-2">
-            <span id="status-text" class="text-xs text-green-400 font-mono mr-2">Online</span>
-            <button onclick="saveLocal()" class="bg-gray-700 hover:bg-gray-600 text-white px-3 py-1 rounded text-xs"><i class="fa-solid fa-floppy-disk"></i> Local</button>
-            <button id="btn-pub" onclick="publish()" class="bg-blue-600 hover:bg-blue-500 text-white px-4 py-1 rounded text-sm font-bold"><i class="fa-solid fa-cloud-arrow-up"></i> PUBLICAR</button>
-            <button onclick="runSim()" class="bg-green-600 hover:bg-green-500 text-white px-4 py-1 rounded text-sm font-bold"><i class="fa-solid fa-play"></i> TEST</button>
-        </div>
-    </header>
+        <button id="btn-reset" onclick="resetState()"
+            class="bg-slate-800 hover:bg-red-900 text-slate-400 hover:text-white px-4 py-2 rounded-md text-sm font-bold transition-all flex items-center gap-2 border border-slate-700">
+            <i class="fa-solid fa-trash-can"></i> LIMPIAR DB
+        </button>
+        <button id="btn-publish" onclick="publish()"
+            class="bg-blue-600 hover:bg-blue-500 text-white px-5 py-2 rounded-md text-sm font-bold shadow-lg transition-all flex items-center gap-2">
+            <i class="fa-solid fa-cloud-arrow-up"></i> PUBLICAR CAMBIOS
+        </button>
+    </nav>
 
-    <div class="flex-1 flex overflow-hidden">
-        <div class="flex-1 flex flex-col min-w-0 bg-[#1e1e1e]">
-            <div class="flex bg-[#252526] text-xs select-none shrink-0">
-                <div id="tab-logic" onclick="setTab('logic')" class="px-6 py-2 cursor-pointer tab-active">logic.js</div>
-                <div id="tab-design" onclick="setTab('design')" class="px-6 py-2 cursor-pointer tab-inactive">design.html (Estructura / Render / Input)</div>
+    <main class="flex-1 p-4 grid grid-cols-12 gap-4 h-full min-h-0">
+        <section class="col-span-9 grid grid-cols-2 grid-rows-2 gap-4 h-full min-h-0">
+            <div class="flex flex-col h-full min-h-0">
+                <div class="panel-header"><span><i class="fa-solid fa-server mr-2"></i>Lógica Servidor</span><span
+                        class="badge badge-server">JS</span></div>
+                <div class="editor-container">
+                    <div id="ed-logic" class="code-editor language-javascript" th:text="${serverLogic}"></div>
+                </div>
             </div>
-
-            <div class="flex-1 relative overflow-hidden">
-                <textarea id="ed-logic" class="code-area p-4 text-sm absolute inset-0" spellcheck="false" oninput="dirty()" th:text="${serverLogic}"></textarea>
-
-                <div id="design-editor" class="design-panel absolute inset-0 hidden">
-                    
-                    <div class="design-section">
-                        <div class="design-label">1. Estructura (HTML / CSS)</div>
-                        <textarea id="ed-structure" class="code-area-small" spellcheck="false" oninput="dirty()" th:utext="${clientStructureHtml}"></textarea>
-                    </div>
-
-                    <div class="design-section">
-                        <div class="design-label">2. Renderizado (onRender)</div>
-                        <textarea id="ed-render" class="code-area-small" spellcheck="false" oninput="dirty()" th:text="${clientRenderScript}"></textarea>
-                    </div>
-
-                    <div class="design-section">
-                        <div class="design-label">3. Entrada (Input / Events)</div>
-                        <textarea id="ed-input" class="code-area-small" spellcheck="false" oninput="dirty()" th:text="${clientInputScript}"></textarea>
+            <div class="flex flex-col h-full min-h-0">
+                <div class="panel-header"><span><i class="fa-brands fa-html5 mr-2"></i>Estructura UI</span><span
+                        class="badge badge-client">HTML</span></div>
+                <div class="editor-container">
+                    <div id="ed-structure" class="code-editor language-javascript" th:text="${clientStructureHtml}">
                     </div>
 
                 </div>
             </div>
-        </div>
+            <div class="flex flex-col h-full min-h-0">
+                <div class="panel-header"><span><i class="fa-solid fa-paint-roller mr-2"></i>Renderizado</span><span
+                        class="badge badge-client">JS</span></div>
+                <div class="editor-container">
+                    <div id="ed-render" class="code-editor language-javascript" th:text="${clientRenderScript}"></div>
+                </div>
 
-        <div class="w-96 bg-[#0f1115] border-l border-gray-700 flex flex-col hidden lg:flex shrink-0">
-            <div class="h-1/2 flex flex-col border-b border-gray-700">
-                <div class="p-2 bg-gray-800 text-[10px] font-bold text-gray-400 uppercase">Live Preview</div>
-                <div id="preview-stage" class="flex-1 relative overflow-hidden bg-black"></div>
             </div>
-            <div class="flex-1 flex flex-col min-h-0">
-                <div class="p-2 bg-gray-800 text-[10px] font-bold text-gray-400 uppercase">State Inspector</div>
-                <div class="flex-1 p-2 overflow-auto font-mono text-xs">
-                    <pre id="json-view" class="text-green-500"></pre>
+            <div class="flex flex-col h-full min-h-0">
+                <div class="panel-header"><span><i class="fa-solid fa-gamepad mr-2"></i>Input & Control</span><span
+                        class="badge badge-client">JS</span></div>
+                <div class="editor-container">
+                    <div id="ed-input" class="code-editor language-javascript" th:text="${clientInputScript}"></div>
+                </div>
+
+            </div>
+        </section>
+
+        <section class="col-span-3 flex flex-col gap-4 h-full">
+            <div class="h-1/2 flex flex-col">
+                <div class="bg-slate-800 p-2 rounded-t text-xs font-bold text-slate-400 uppercase">Assets</div>
+                <div class="soon-panel flex-1">
+                    <div class="text-center"><i class="fa-solid fa-box-open text-4xl mb-2 opacity-50"></i>
+                        <div class="text-sm opacity-50">Próximamente</div>
+                    </div>
                 </div>
             </div>
-        </div>
-    </div>
-
-    <!-- ENGINE LOGIC -->
+            <div class="h-1/2 flex flex-col">
+                <div class="bg-slate-800 p-2 rounded-t text-xs font-bold text-slate-400 uppercase">Consola</div>
+                <div class="soon-panel flex-1">
+                    <div class="text-center"><i class="fa-solid fa-terminal text-4xl mb-2 opacity-50"></i>
+                        <div class="text-sm opacity-50">Próximamente</div>
+                    </div>
+                </div>
+            </div>
+        </section>
+    </main>
     <script>
-        // Leer variables de los atributos data- en el body
-        const body = document.body;
-        const ROOM_ID = body.dataset.roomId || null;
-        const USER_NAME = body.dataset.currentUsername || null;
-        const ROOM_OWNER = body.dataset.roomOwner || null;
-        // ***************************************************************
-        // 1. OBTENER LA URL BASE DE LA API DE NODE.JS (Ej. Render URL)
-        // ***************************************************************
-        const API_BASE_URL = body.dataset.apiBase || 'http://localhost:3000'; // Fallback a localhost
-        console.log('API_BASE_URL:', API_BASE_URL);
-        console.log('room_ID:', ROOM_ID);
-        console.log('user_NAME:', USER_NAME);
-        console.log('room_OWNER:', ROOM_OWNER);
+        // Definimos esto GLOBALMENTE para que funcione en resetState y en el módulo
+        window.API_URL = document.body.dataset.apiBase || "http://localhost:3000";
+        window.ROOM_ID = document.body.dataset.roomId;
+        async function resetState() {
+            if (!confirm("¿Estás seguro? Se borrará el estado persistente (DB) de esta sala.")) return;
 
-        // NOTE: El acceso a la base de datos y la clave de Supabase ya no se hace desde el frontend.
-        // Se delega al servidor mediante un endpoint POST /api/publish-room.
+            const btn = document.getElementById('btn-reset');
+            btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> BORRANDO...';
 
-        let state = { tick: 0, jugadores: [], mapa: {} };
-        let logicFn = { onUpdate: null, onInput: null, onBot: null, botConfig: { count: 0 } }, renderFn = null;
+            try {
+                const res = await fetch(window.API_URL + '/api/reset-room-state', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ roomId: ROOM_ID })
+                });
 
-        function setTab(t) {
-            document.getElementById('ed-logic').classList.toggle('hidden', t !== 'logic');
-            document.getElementById('design-editor').classList.toggle('hidden', t !== 'design');
-
-            const logicTab = document.getElementById('tab-logic');
-            const designTab = document.getElementById('tab-design');
-
-            logicTab.className = t === 'logic' ? 'px-4 py-2 cursor-pointer tab-active' : 'px-4 py-2 cursor-pointer tab-inactive';
-            designTab.className = t === 'design' ? 'px-4 py-2 cursor-pointer tab-active' : 'px-4 py-2 cursor-pointer tab-inactive';
+                if (res.ok) {
+                    btn.innerHTML = '<i class="fa-solid fa-check"></i> DB LIMPIA';
+                    btn.classList.add('text-emerald-500');
+                    setTimeout(() => location.reload(), 1000); // Recargamos para ver cambios
+                }else {
+                    throw new Error('Server error');
+                }
+            } catch (e) {
+                btn.innerHTML = '<i class="fa-solid fa-xmark"></i> ERROR';
+            }
         }
+    </script>
+    <script type="module">
+        
 
-        window.SIM_emit = function (pl) { /* ... (sim logic) ... */ };
-        function runSim() { /* ... (sim logic) ... */ };
-        function checkPermissions() { /* ... (permission logic) ... */ };
-
-        // --- PUBLICAR (AHORA VIA SERVER) ---
-        async function publish() {
-            if (!USER_NAME || USER_NAME !== ROOM_OWNER) {
-                alert("Permiso denegado: Solo el dueño puede publicar.");
+        // Importamos la librería directamente desde la CDN como módulo
+        import { CodeJar } from 'https://medv.io/codejar/codejar.js';
+        let jarLogic, jarStructure, jarRender, jarInput;
+        window.onload = () => {
+            // Verificar si CodeJar cargó
+            if (typeof CodeJar === 'undefined') {
+                console.error("❌ Error: CodeJar no se cargó. Revisa tu conexión o la URL de la CDN.");
                 return;
             }
 
-            const btn = document.getElementById('btn-pub');
-            btn.innerHTML = 'Subiendo...';
+            // Función de resaltado
+            const highlight = (editor) => {
+                const isHTML = editor.classList.contains('language-markup');
+                const lang = isHTML ? 'markup' : 'javascript';
+                const code = editor.textContent;
+                editor.innerHTML = Prism.highlight(code, Prism.languages[lang], lang);
+            };
 
-            const serverLogic = document.getElementById('ed-logic').value;
-            const structure = document.getElementById('ed-structure').value;
-            const renderScript = document.getElementById('ed-render').value;
-            const inputScript = document.getElementById('ed-input').value;
+            // Función de configuración
+            const setup = (id) => {
+                const el = document.getElementById(id);
+                const initialCode = el.textContent;
+                el.innerHTML = ""; // Limpieza de seguridad
 
-            // ELIMINADO EL ENSAMBLAJE clientHtmlFinal AQUÍ EN EL FRONTEND
+                const jar = CodeJar(el, highlight);
+                jar.updateCode(initialCode);
+                return jar;
+            };
+
+            // Inicialización al cargar la página
+            try {
+                jarLogic = setup('ed-logic');
+                jarStructure = setup('ed-structure');
+                jarRender = setup('ed-render');
+                jarInput = setup('ed-input');
+
+                // Exportar a window para que tu función publish() pueda verlos
+                window.jars = { jarLogic, jarStructure, jarRender, jarInput };
+                console.log("✅ Editores vinculados mediante Módulo ESM.");
+            } catch (e) {
+                console.error("❌ Error inicializando editores:", e);
+            }
+        };
+
+
+        // Ajustamos tu función publish para leer de window.jars
+        window.publish = async () => {
+            const btn = document.getElementById('btn-publish');
+            const originalHTML = btn.innerHTML;
+
+            btn.innerHTML = '<i class="fa-solid fa-circle-notch fa-spin"></i> GUARDANDO...';
+            btn.classList.add('opacity-75', 'cursor-not-allowed');
+
+            const payload = {
+                roomId: document.body.dataset.roomId,
+                serverLogic: window.jars.jarLogic.toString(),
+                clientStructureHtml: window.jars.jarStructure.toString(),
+                clientRenderScript: window.jars.jarRender.toString(),
+                clientInputScript: window.jars.jarInput.toString()
+            };
 
             try {
-                // ***************************************************************
-                // 2. LA LLAMADA FETCH AHORA USA LA VARIABLE DE ENTORNO
-                // ***************************************************************
-                const resp = await fetch(`${API_BASE_URL}/api/publish-room`, {
+                const res = await fetch(window.API_URL + '/api/publish-room', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        roomId: ROOM_ID,
-                        serverLogic: serverLogic,
-                        clientStructureHtml: structure,
-                        clientRenderScript: renderScript,
-                        clientInputScript: inputScript
-                    })
+                    body: JSON.stringify(payload)
                 });
+                if (!res.ok) throw new Error("Error Server");
 
-                if (!resp.ok) {
-                    const txt = await resp.text();
-                    alert('Error servidor: ' + txt);
-                    btn.innerHTML = 'ERROR';
-                    return;
-                }
+                btn.innerHTML = '<i class="fa-solid fa-check"></i> PUBLICADO';
+                btn.classList.replace('bg-blue-600', 'bg-emerald-600');
+                btn.classList.replace('hover:bg-blue-500', 'hover:bg-emerald-500');
 
-                // Respuesta correcta
-                runSim();
-                btn.innerHTML = '✔ PUBLICADO'; setTimeout(() => btn.innerHTML = 'PUBLICAR', 2000);
+                setTimeout(() => {
+                    btn.innerHTML = originalHTML;
+                    btn.classList.replace('bg-emerald-600', 'bg-blue-600');
+                    btn.classList.replace('hover:bg-emerald-500', 'hover:bg-blue-500');
+                    btn.classList.remove('opacity-75', 'cursor-not-allowed');
+                }, 2000);
+
             } catch (e) {
-                alert('Error de red: ' + e.message);
-                btn.innerHTML = 'ERROR';
+                console.error(e);
+                btn.innerHTML = '<i class="fa-solid fa-triangle-exclamation"></i> ERROR';
+                btn.classList.replace('bg-blue-600', 'bg-red-600');
+                setTimeout(() => {
+                    btn.innerHTML = originalHTML;
+                    btn.classList.replace('bg-red-600', 'bg-blue-600');
+                    btn.classList.remove('opacity-75', 'cursor-not-allowed');
+                }, 2000);
             }
         }
-
-        function loadContent() {
-            // El contenido ya está inyectado directamente en los textareas por Thymeleaf
-            checkPermissions();
-            if (ROOM_ID) runSim();
-        }
-
-        function saveLocal() {
-            localStorage.setItem('logic_' + ROOM_ID, document.getElementById('ed-logic').value);
-            localStorage.setItem('structure_' + ROOM_ID, document.getElementById('ed-structure').value);
-            localStorage.setItem('render_' + ROOM_ID, document.getElementById('ed-render').value);
-            localStorage.setItem('input_' + ROOM_ID, document.getElementById('ed-input').value);
-        }
-        function dirty() { document.getElementById('status-text').innerText = "Changes..."; }
-
-        // Cargar desde local storage si existe (para desarrollo)
-        if (localStorage.getItem('logic_' + ROOM_ID)) document.getElementById('ed-logic').value =
-            localStorage.getItem('logic_' + ROOM_ID);
-        if (localStorage.getItem('structure_' + ROOM_ID)) document.getElementById('ed-structure').value =
-            localStorage.getItem('structure_' + ROOM_ID);
-        if (localStorage.getItem('render_' + ROOM_ID)) document.getElementById('ed-render').value =
-            localStorage.getItem('render_' + ROOM_ID);
-        if (localStorage.getItem('input_' + ROOM_ID)) document.getElementById('ed-input').value =
-            localStorage.getItem('input_' + ROOM_ID);
-
-
-        window.onload = loadContent;
-
     </script>
+
+
 </body>
+
 
 </html>
