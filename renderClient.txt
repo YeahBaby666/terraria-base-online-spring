@@ -1,0 +1,249 @@
+// ==========================================
+// 1. CONFIGURACIÓN DEL MUNDO
+// ==========================================
+Client.initMapFisica([], false); 
+
+// Paredes y Suelo (Caja cerrada)
+Client.setBlock(0, 600, 1200, 50);    // Suelo
+Client.setBlock(0, -600, 1200, 50);   // Techo (Alto para que el globo suba)
+Client.setBlock(-50, -600, 50, 1250); // Pared Izq
+Client.setBlock(1200, -600, 50, 1250);// Pared Der
+
+// Plataformas
+Client.setBlock(300, 400, 200, 20);
+Client.setBlock(700, 300, 200, 20);
+
+// Entidades
+window.player = { x: 100, y: 100, width: 20, height: 38, color: '#00ccff', modo: 0 }; // 0: Normal, 1: Vuelo Físico (G), 2: Modo Dios (F)
+window.balloon = { x: 400, y: 100, width: 30, height: 30, color: '#ff5555' }; // Y=100 (Aire libre)
+window.anvil = { x: 600, y: 100, width: 40, height: 40, color: '#888888' };
+
+// Registrar
+Client.addEntidades([window.player], 'jugadores');
+Client.addEntidades([window.balloon], 'flotantes');
+Client.addEntidades([window.anvil], 'pesados');
+
+// Gravedades
+// Definir las reglas de gravedad
+Client.gravity(1000, 'jugadores'); // Gravedad normal para caminar
+Client.gravity(0, 'zero_g');       // Gravedad Cero para el modo 'G' Dios
+
+Client.gravity(1000);              // Normal
+Client.gravity(-300, 'flotantes'); // Sube hacia el techo
+Client.gravity(2500, 'pesados');   // Cae rápido
+
+Client.startFisica();
+Client.myPlayer = window.player;
+console.log("✅ Sandbox Listo. Prueba Clic Derecho e Izquierdo.");
+
+// ==========================================
+// 2. INPUT LOOP
+// ==========================================
+window.onInputLoop = () => {
+    const p = window.player;
+    const speed = 300;
+
+    // Movimiento Jugador
+    if (Client.isKeyDown('KeyD')) p.vx = speed;
+    else if (Client.isKeyDown('KeyA')) p.vx = -speed;
+    else p.vx = 0;
+
+    if (Client.isJustPressed('Space') && p.onGround) p.vy = -650;
+
+    // Cámara
+    Client.setCamera({ x: p.x, y: p.y }, 0.1); 
+
+    // --- PRUEBA CLICS (Teletransportes) ---
+    const m = Client.worldMouse;
+
+    
+    // --- PRUEBAS DE GRUPOS EN TIEMPO REAL ---
+
+    // Tecla 'G': Invertir gravedad del Globo
+    if (Client.frameKeys.includes('KeyG')) {
+        console.log("🎈 Cambiando gravedad del Globo...");
+        // Si estaba flotando (-200), ahora cae (500)
+        const current = Client.physics.groupGravity.get('flotantes');
+        Client.gravity(current < 0 ? 500 : -200, 'flotantes');
+    }
+
+    // Tecla 'H': Hacer el Yunque ingrávido (Gravedad 0)
+    if (Client.frameKeys.includes('KeyH')) {
+        console.log("🪨 Yunque modo Espacio (0G)");
+        Client.gravity(0, 'pesados');
+        window.anvil.vy = -100; // Un empujoncito hacia arriba
+    }
+
+    // MOUSE: Teletransportar el Yunque al clic izquierdo
+    if (Client.isJustPressed('LeftClick')) {
+        const m = Client.worldMouse;
+        Client.setEntidad(window.anvil, m.x, m.y);
+        
+        console.log("🖱️ Yunque teletransportado!");
+    }
+    
+    // MOUSE: Teletransportar el Balloon al clic derecho
+    if (Client.isJustPressed('LeftClick')) {
+        const m = Client.worldMouse;
+        Client.setEntidad(window.balloon, m.x, m.y);
+        
+        console.log("🖱️ Globo teletransportado!");
+    }
+    
+    // Toggle para ver lo invisible (Tecla 'I')
+    if (Client.isJustPressed('KeyI')) {
+        window.showInvisible = !window.showInvisible;
+        console.log("👁️ Ver Invisibles:", window.showInvisible);
+    }
+    
+    // --- BORRAR MURO (BACKSPACE) ---
+    if (Client.frameKeys.includes('Backspace')) {
+        if (window.muro.activo) {
+            console.log("🗑️ Intentando borrar muro...");
+            
+            // Llamada IMPORTANTE: pasamos 'false' al final
+            Client.setBlock(window.muro.x, window.muro.y, window.muro.w, window.muro.h, false);
+            
+            window.muro.activo = false;
+        } else {
+            console.log("⚠️ El muro ya fue borrado.");
+        }
+    }
+    
+    // --- RESTAURAR MURO (ENTER) ---
+    if (Client.frameKeys.includes('Enter')) {
+        if (!window.muro.activo) {
+            console.log("🧱 Restaurando muro...");
+            Client.setBlock(window.muro.x, window.muro.y, window.muro.w, window.muro.h, true);
+            window.muro.activo = true;
+        }
+    }
+    
+    
+    // Tecla 'G': VUELO FÍSICO (Gravedad Cero, Con Colisiones)
+    if (Client.isJustPressed('KeyG')) {
+        // Alternar entre modo 0 y 1
+        p.mode = (p.mode === 1) ? 0 : 1;
+        updatePhysicsState(p);
+    }
+
+    // Tecla 'F': MODO DIOS (Sin Física, Atraviesa Paredes)
+    if (Client.isJustPressed('KeyF')) {
+        // Alternar entre modo 0 y 2
+        p.mode = (p.mode === 2) ? 0 : 2;
+        updatePhysicsState(p);
+    }
+
+    // ==========================================
+    // 2. COMPORTAMIENTO SEGÚN MODO
+    // ==========================================
+
+    if (p.mode === 2) { 
+        // --- MODO DIOS (Amarillo) ---
+        // Movemos coordenadas directamente (Teletransporte suave)
+        // Ignora paredes porque p.static = true
+        const flySpeed = 10;
+        if (Client.isKeyDown('KeyW')) p.y -= flySpeed;
+        if (Client.isKeyDown('KeyS')) p.y += flySpeed;
+        if (Client.isKeyDown('KeyA')) p.x -= flySpeed;
+        if (Client.isKeyDown('KeyD')) p.x += flySpeed;
+        
+        // Frenar inercia física residual
+        p.vx = 0; p.vy = 0; 
+
+    } else if (p.mode === 1) {
+        // --- VUELO FÍSICO (Verde) ---
+        // Usamos Velocidad (vx, vy) para que el motor de física detecte choques.
+        
+        // Eje Y (Subir/Bajar)
+        if (Client.isKeyDown('KeyW')) p.vy = -speed;
+        else if (Client.isKeyDown('KeyS')) p.vy = speed;
+        else p.vy = p.vy * 0.9; // Freno de aire (Drag) para no deslizar eternamente
+
+        // Eje X (Izquierda/Derecha)
+        if (Client.isKeyDown('KeyD')) p.vx = speed;
+        else if (Client.isKeyDown('KeyA')) p.vx = -speed;
+        else p.vx = p.vx * 0.9; // Freno lateral
+
+    } else {
+        // --- NORMAL (Azul) ---
+        // Gravedad aplica automáticamente (Grupo 'jugadores')
+        
+        if (Client.isKeyDown('KeyD')) p.vx = speed;
+        else if (Client.isKeyDown('KeyA')) p.vx = -speed;
+        else p.vx = 0;
+
+        if (Client.isJustPressed('Space') && p.onGround) {
+            p.vy = -600;
+        }
+    }
+};
+
+// ==========================================
+// FUNCIÓN AUXILIAR: CAMBIAR GRUPO FÍSICO
+// ==========================================
+function updatePhysicsState(p) {
+    // Buscamos el wrapper de la entidad en el motor de física
+    // (Esta es una forma directa de acceder a la lista interna)
+    const physEnt = Client.physics.entities.find(e => e.ref === p);
+    
+    if (!physEnt) return;
+
+    if (p.mode === 0) {
+        console.log("🚶 Modo Normal");
+        p.color = '#00ccff';
+        p.static = false;               // Física ACTIVA
+        physEnt.group = 'jugadores';    // Gravedad: 1000
+    } 
+    else if (p.mode === 1) {
+        console.log("🚁 Modo Vuelo Físico (Zero G)"); // Aun puedes saltar si tocas piso
+        p.color = '#00ff00';            // Verde
+        p.static = false;               // Física ACTIVA (para colisiones)
+        physEnt.group = 'zero_g';       // Gravedad: 0 (Flotar)
+    } 
+    else if (p.mode === 2) {
+        console.log("🕊️ Modo Dios (No Clip)"); // No puedes saltar, solo volar
+        p.color = '#ffff00';            // Amarillo
+        p.static = true;                // Física INACTIVA (Atraviesa todo)
+    }
+}
+
+window.muro = { x: 400, y: 350, w: 50, h: 150, activo: true };
+// --- ELEMENTOS INVISIBLES ---
+// Muro invisible en el medio (x=400)
+// El motor físico lo registra, el jugador chocará.
+Client.setBlock(400, 350, 50, 150);
+window.showInvisible = false; // Estado inicial
+// ==========================================
+// 3. RENDER LOOP
+// ==========================================
+window.onRender = () => {
+    // Si Client.render.autoClear es true, no hace falta limpiar manualmente
+    
+    // Mapa (Visualización de colisiones)
+    Client.drawRect(0, 600, 1200, 50, '#444');
+    Client.drawRect(0, -600, 1200, 50, '#444'); // Techo
+    Client.drawRect(-50, -600, 50, 1250, '#333');
+    Client.drawRect(1200, -600, 50, 1250, '#333');
+    Client.drawRect(300, 400, 200, 20, '#664422');
+    Client.drawRect(700, 300, 200, 20, '#664422');
+
+    // Entidades f = 3 por default
+    Client.drawEntity(player, player.color, 0.35); //Suavizado f: 0.2; f < 0.1, f > 0.6 no recomendado
+    Client.drawEntity(balloon); 
+    Client.drawEntity(anvil);
+    
+    // Cursor Debug
+    Client.drawRect(Client.worldMouse.x - 2, Client.worldMouse.y - 2, 4, 4, 'yellow');
+    
+    Client.drawText("Izquierdo: Yunque | Derecho: Globo", player.x - 150, player.y - 150);
+    
+    // 3. MODO DEBUG (Para que tú sepas dónde están)
+    // Dibujamos el muro SOLO si nuestra variable lógica dice que está activo
+    // (Esto confirma si visual y física están sincronizados)
+    if (window.showInvisible && window.muro.activo) {
+        Client.drawRect(window.muro.x, window.muro.y, window.muro.w, window.muro.h, 'rgba(255, 0, 0, 0.5)');
+    }
+    
+    Client.drawText("Presiona 'I' para revelar el muro invisible", player.x - 100, player.y - 130);
+};

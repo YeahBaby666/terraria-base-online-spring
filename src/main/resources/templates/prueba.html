@@ -1,0 +1,193 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <title>Motor Físico por Referencia</title>
+    <style>
+        body { margin: 0; background: #111; overflow: hidden; color: white; font-family: monospace; }
+        canvas { display: block; }
+        #ui { position: absolute; top: 10px; left: 10px; pointer-events: none; }
+    </style>
+</head>
+<body>
+
+<div id="ui">
+    <p>Usa las FLECHAS para sumar fuerzas (+=).</p>
+    <div id="debug"></div>
+</div>
+<canvas id="gameCanvas"></canvas>
+
+<script>
+    // ---------------------------------------------------------
+    // 1. DEFINICIÓN DEL MOTOR (SISTEMA BASE)
+    // ---------------------------------------------------------
+    
+    const Render = {
+        canvas: document.getElementById('gameCanvas'),
+        ctx: document.getElementById('gameCanvas').getContext('2d'),
+        width: window.innerWidth,
+        height: window.innerHeight,
+        
+        clear: function() {
+            this.canvas.width = this.width; // Reset y clear al ajustar tamaño
+            this.canvas.height = this.height;
+            this.ctx.fillStyle = "#222";
+            this.ctx.fillRect(0, 0, this.width, this.height);
+        },
+        
+        drawEntity: function(ent) {
+            // Soporte para tus nombres de variable (Mayúscula/Minúscula)
+            const x = ent.x;
+            const y = ent.y;
+            const w = ent.Width || ent.width || 10;
+            const h = ent.Height || ent.height || 10;
+            
+            this.ctx.fillStyle = ent.color || 'white';
+            this.ctx.fillRect(x, y, w, h);
+            
+            // Debug visual
+            this.ctx.fillStyle = '#fff';
+            this.ctx.font = '10px Arial';
+            this.ctx.fillText(`Y: ${y.toFixed(0)}`, x, y - 5);
+        }
+    };
+
+    const Cliente = {
+        Fisica: {
+            entidades: [], // Lista de referencias
+            gravedad: 9.8,
+
+            // Aquí ocurre la magia de la referencia
+            newEntity: function(ref) {
+                // 1. PREPARAR: Asegurar que las variables existan para poder hacer +=
+                if (typeof ref.x === 'undefined') ref.x = 0;
+                if (typeof ref.y === 'undefined') ref.y = 0;
+                if (typeof ref.vx === 'undefined') ref.vx = 0;
+                if (typeof ref.vy === 'undefined') ref.vy = 0;
+                if (typeof ref.masa === 'undefined') ref.masa = 1;
+                
+                // 2. VINCULAR: Guardamos el objeto tal cual
+                this.entidades.push(ref);
+                return ref;
+            },
+
+            step: function(dt) {
+                // dt es delta time (segundos)
+                for (let ent of this.entidades) {
+                    if (ent.static) continue;
+
+                    // A. Aplicar Gravedad (Suma a la vy existente)
+                    ent.vy += this.gravedad * dt * 5; // *5 para escalar visualmente
+
+                    // B. Mover (Actualiza la referencia original)
+                    ent.x += ent.vx * dt;
+                    ent.y += ent.vy * dt;
+
+                    // C. Colisiones Suelo (Rebote simple para no caer al infinito)
+                    const h = ent.colisionHeight || ent.Height || 10;
+                    const suelo = Render.height - 50;
+
+                    if (ent.y + h > suelo) {
+                        ent.y = suelo - h;
+                        ent.vy = 0;
+                        ent.enSuelo = true;
+                        
+                        // Fricción simple (Reduce vx si está en suelo)
+                        ent.vx *= 0.95; 
+                        if (Math.abs(ent.vx) < 0.1) ent.vx = 0;
+                    } else {
+                        ent.enSuelo = false;
+                    }
+                    
+                    // Colisión Paredes
+                    const w = ent.colisionWidth || ent.Width || 10;
+                    if (ent.x < 0) { ent.x = 0; ent.vx *= -0.5; }
+                    if (ent.x + w > Render.width) { ent.x = Render.width - w; ent.vx *= -0.5; }
+                }
+            }
+        }
+    };
+
+    // Bucle del Juego
+    function gameLoop() {
+        // 1. Calcular Física
+        Cliente.Fisica.step(0.016); // 60 FPS aprox
+
+        // 2. Renderizar
+        Render.clear();
+        for (let ent of Cliente.Fisica.entidades) {
+            Render.drawEntity(ent);
+        }
+
+        // 3. Debug en HTML (Para demostrar que la referencia es real)
+        // Nota: Accedemos directamente a la variable global 'entity' definida abajo
+        if (typeof entity !== 'undefined') {
+            document.getElementById('debug').innerHTML = 
+                `Ref Global -> VX: ${entity.vx.toFixed(2)} | Y: ${entity.y.toFixed(2)}`;
+        }
+
+        requestAnimationFrame(gameLoop);
+    }
+
+    // Iniciamos el bucle antes o después, no importa, siempre que 'Cliente' exista.
+    requestAnimationFrame(gameLoop);
+
+    // ---------------------------------------------------------
+    // 2. TU CÓDIGO (USUARIO)
+    // ---------------------------------------------------------
+    
+    // Creación del objeto LITERAL
+    let entity = {}; 
+
+    // Configuración inicial de datos
+    entity.x = 100;
+    entity.y = 100;
+    entity.Width = 40;        // Para pintar
+    entity.Height = 40;       // Para pintar
+    entity.colisionWidth = 40; 
+    entity.colisionHeight = 40;
+    entity.color = '#00ffff';
+    entity.masa = 5;
+
+    // REGISTRO EN EL MOTOR
+    // Al pasar 'entity', JS pasa la referencia en memoria.
+    Cliente.Fisica.newEntity(entity);
+
+    // PRUEBA DE SUMA DE FUERZAS (Controles)
+    // Modificamos 'entity' directamente y el motor reacciona.
+    window.addEventListener('keydown', (e) => {
+        
+        // Aquí está lo que pedías: entity.vx += valor
+        // No usamos setters, tocamos la variable cruda.
+        
+        if (e.key === 'ArrowRight') {
+            entity.vx += 50; 
+            console.log("Derecha! Nueva VX:", entity.vx);
+        }
+        
+        if (e.key === 'ArrowLeft') {
+            entity.vx += -50; // Sumar negativo
+            console.log("Izquierda! Nueva VX:", entity.vx);
+        }
+        
+        if (e.key === 'ArrowUp') {
+            entity.vy += -150; // Salto instantáneo
+        }
+    });
+
+    // PRUEBA AUTOMÁTICA (Consola)
+    setTimeout(() => {
+        console.log("--- TEST DE REFERENCIA ---");
+        console.log("Valor Y inicial: 100");
+        console.log("Valor Y actual (en memoria):", entity.y);
+        
+        if (entity.y !== 100) {
+            console.log("✅ CORRECTO: El motor está modificando tu objeto 'entity'.");
+        } else {
+            console.log("❌ ERROR: El objeto no se mueve.");
+        }
+    }, 2000);
+
+</script>
+</body>
+</html>
