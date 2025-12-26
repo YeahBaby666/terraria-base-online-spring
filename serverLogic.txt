@@ -1,0 +1,512 @@
+Prueba 1:
+// 1. DEFINICIÓN: Creamos un "Saco de Boxeo" para pruebas
+Actor.define('DummyTarget', {
+    vars: { hp: 100, name: 'Saco de Boxeo' }
+}, {
+    // Lógica simple: Si recibe 'golpe', baja vida
+    test_hit: (me, data) => {
+        const newHp = me.vars.hp - data.dmg;
+        me.setVar('hp', newHp);
+        console.log(`🥊 [TEST] Dummy recibió ${data.dmg} daño. Vida: ${newHp}`);
+    }
+});
+
+// 2. EJECUCIÓN DEL TEST (Se corre una vez al iniciar)
+// Usamos setTimeout para dar tiempo a que el sistema arranque
+setTimeout(() => {
+    console.log("🧪 --- INICIANDO TEST AUTOMÁTICO ---");
+
+    // A. SETUP: Crear el actor
+    const dummy = Actor.create('DummyTarget', { hp: 100 });
+    
+    // B. ASSERT PREVIO: Verificar estado inicial
+    if (dummy.vars.hp !== 100) console.error("❌ Fallo Setup");
+	
+    console.log("Buscando actores: ", Actor.getActorsByGrupo("DummyTarget"));
+    // C. ACT: Simular la acción (Sin necesidad de clientes reales)
+    // Forzamos el evento 'test_hit'
+    dummy.receive('test_hit', { dmg: 40 });
+
+    // D. ASSERT POSTERIOR: Verificar resultado
+    if (dummy.vars.hp === 60) {
+        console.log("✅ PRUEBA PASADA: El daño se calculó correctamente.");
+    } else {
+        console.error(`❌ PRUEBA FALLIDA: Esperaba 60, tengo ${dummy.vars.hp}`);
+    }
+
+    // E. CLEANUP: Limpiar
+    dummy.selfDestruct();
+    console.log("🧪 --- TEST FINALIZADO destruccion del actor---");
+    console.log("Buscando actores: ", Actor.getActorsByGrupo("DummyTarget"));
+}, 2000);
+Console:
+🧪 --- INICIANDO TEST AUTOMÁTICO ---
+Buscando actores:  [
+  Entity {
+    id: 1,
+    grupo: 'DummyTarget',
+    hub: SignalHub { channels: [Map], globalId: 1 },
+    vars: { hp: 100, name: 'Saco de Boxeo' },
+    channelsIn: [ 'DummyTarget', 'global' ],
+    channelsOut: [ 'DummyTarget', 'global' ],
+    writingAllowed: false,
+    destructedAutomatic: false
+  }
+]
+🥊 [TEST] Dummy recibió 40 daño. Vida: 60
+✅ PRUEBA PASADA: El daño se calculó correctamente.
+🧪 --- TEST FINALIZADO destruccion del actor---
+Buscando actores:  []
+
+Prueba 2: solicitud y retorno entre actores (funcion receive, me, sender)
+// =============================================================
+// 1. DEFINICIÓN DE ACTORES
+// =============================================================
+
+// --- EL COMANDANTE (Emisor de órdenes) ---
+Actor.define('Comandante', { 
+    vars: { nombre: 'General Shepard', rango: 5 } 
+}, {
+    // Reacción cuando el soldado confirma la orden
+    reporte_soldado: (me, data, sender) => {
+        console.log(`🎖️ [COMANDANTE] Recibido reporte de ${sender.vars.nombre}: "${data.msg}"`);
+        console.log(`🎖️ [COMANDANTE] Estado de la misión: VERDE.`);
+    }
+});
+
+// --- EL SOLDADO (El que sufre y pide ayuda) ---
+Actor.define('Soldado', { 
+    vars: { hp: 10, nombre: 'Pvt. Ryan', estado: 'Herido' } 
+}, {
+    // 1. Recibe orden del General
+    orden_ataque: (me, data, sender) => {
+        console.log(`🪖 [SOLDADO] Orden recibida de ${sender.vars.nombre}: Atacar.`);
+        
+        if (me.vars.hp < 50) {
+            console.log(`🪖 [SOLDADO] ¡Estoy muy herido (${me.vars.hp} HP)! No puedo atacar.`);
+            console.log(`🪖 [SOLDADO] Buscando médico cercano...`);
+            
+            // BUSCAR UN ACTOR MÉDICO
+            const medicos = Actor.getActorsByGrupo('Medico');
+            if (medicos.length > 0) {
+                const doc = medicos[0]; // Agarramos el primero
+                console.log(`📡 [SOLDADO -> MÉDICO] Solicitando curación a ${doc.vars.nombre}...`);
+                
+                // COMUNICACIÓN: Soldado -> Médico
+                // Pasamos 'me' como tercer argumento para que el médico sepa quién pide ayuda
+                doc.receive('solicitud_curacion', { prioridad: 'ALTA' }, me);
+            } else {
+                console.log(`💀 [SOLDADO] No hay médicos. Muriendo...`);
+            }
+        }
+    },
+
+    // 3. Recibe la curación del Médico
+    recibir_botiquin: (me, data, sender) => {
+        console.log(`❤️ [SOLDADO] Recibiendo ${data.amount} HP de ${sender.vars.nombre}.`);
+        
+        const nuevaVida = me.vars.hp + data.amount;
+        me.setVar('hp', nuevaVida);
+        me.setVar('estado', 'Listo');
+        
+        console.log(`🪖 [SOLDADO] Vida actual: ${me.vars.hp}. Estado: ${me.vars.estado}.`);
+
+        // 4. Comunicar de vuelta al Comandante (suponiendo que sabemos quién es o lo buscamos)
+        const jefes = Actor.getActorsByGrupo('Comandante');
+        if (jefes.length > 0) {
+            console.log(`📡 [SOLDADO -> COMANDANTE] Confirmando disponibilidad.`);
+            jefes[0].receive('reporte_soldado', { msg: 'Recuperado y avanzando.' }, me);
+        }
+    }
+});
+
+// --- EL MÉDICO (El soporte) ---
+Actor.define('Medico', { 
+    vars: { nombre: 'Doc', botiquines: 5 } 
+}, {
+    // 2. Recibe solicitud del Soldado
+    solicitud_curacion: (me, data, sender) => {
+        console.log(`🚑 [MÉDICO] Solicitud de ${sender.vars.nombre} recibida. Prioridad: ${data.prioridad}.`);
+        
+        if (me.vars.botiquines > 0) {
+            me.setVar('botiquines', me.vars.botiquines - 1);
+            console.log(`🚑 [MÉDICO] Aplicando curación. Botiquines restantes: ${me.vars.botiquines}.`);
+            
+            // COMUNICACIÓN: Médico -> Soldado (Respuesta)
+            sender.receive('recibir_botiquin', { amount: 90 }, me);
+        } else {
+            console.log(`🚑 [MÉDICO] ¡No me quedan botiquines!`);
+        }
+    }
+});
+
+
+// =============================================================
+// 2. ESCENARIO DE PRUEBA (Ejecución)
+// =============================================================
+
+setTimeout(() => {
+    console.log("\n🎬 --- INICIO DE LA SIMULACIÓN DE ACTORES ---\n");
+
+    // A. CREAMOS LOS ACTORES
+    const general = Actor.create('Comandante', {});
+    const ryan = Actor.create('Soldado', { hp: 10, nombre: 'Ryan' });
+    const doc = Actor.create('Medico', { nombre: 'House' });
+
+    console.log(`✅ Actores en escena:`);
+    console.log(`   > ${general.vars.nombre} (ID: ${general.id})`);
+    console.log(`   > ${ryan.vars.nombre} (ID: ${ryan.id}) [HP: ${ryan.vars.hp}]`);
+    console.log(`   > ${doc.vars.nombre} (ID: ${doc.id})\n`);
+
+    // B. DETONAMOS LA CADENA DE EVENTOS
+    console.log("⚡ [ACCIÓN] El General da la orden...");
+    
+    // El general envía el mensaje al soldado
+    // 'general' es el sender (remitente)
+    ryan.receive('orden_ataque', {}, general);
+
+}, 1000);
+Console:
+🎬 --- INICIO DE LA SIMULACIÓN DE ACTORES ---
+
+✅ Actores en escena:
+   > General Shepard (ID: 1)
+   > Ryan (ID: 2) [HP: 10]
+   > House (ID: 3)
+
+⚡ [ACCIÓN] El General da la orden...
+🪖 [SOLDADO] Orden recibida de General Shepard: Atacar.
+🪖 [SOLDADO] ¡Estoy muy herido (10 HP)! No puedo atacar.
+🪖 [SOLDADO] Buscando médico cercano...
+📡 [SOLDADO -> MÉDICO] Solicitando curación a House...
+🚑 [MÉDICO] Solicitud de Ryan recibida. Prioridad: ALTA.
+🚑 [MÉDICO] Aplicando curación. Botiquines restantes: 4.
+❤️ [SOLDADO] Recibiendo 90 HP de House.
+🪖 [SOLDADO] Vida actual: 100. Estado: Listo.
+📡 [SOLDADO -> COMANDANTE] Confirmando disponibilidad.
+🎖️ [COMANDANTE] Recibido reporte de Ryan: "Recuperado y avanzando."
+🎖️ [COMANDANTE] Estado de la misión: VERDE
+
+
+Prueba 3: comunicacion entre actores.
+// =============================================================
+// DEFINICIÓN: DRON ESPÍA (La entidad compleja)
+// =============================================================
+Actor.define('DronEspia', {
+    vars: { id_interno: 'X-99', estado: 'Inactivo' },
+    // Nace escuchando solo su canal de control directo
+    onCanal: ['CONTROL_REMOTO'] 
+}, {
+    
+    // 1. INICIALIZACIÓN (setVar, emitClient)
+    activar_protocolo: (me, data) => {
+        console.log(`🤖 [DRON] Recibiendo orden de activación...`);
+        
+        // setVar: Guardamos datos críticos recibidos dinámicamente
+        me.setVar('estado', 'Escaneando');
+        me.setVar('datos_sensibles', data.secretCode); 
+        console.log(`💾 [VAR] Datos sensibles guardados en memoria: ${me.vars.datos_sensibles}`);
+
+        // emitClient: Avisamos solo al dueño (UI) que el dron despertó
+        // (Esto pintaría algo en la pantalla del jugador)
+        me.emitClient('hud_update', { status: 'ONLINE', battery: 100 });
+        console.log(`🖥️ [CLIENT] HUD actualizado.`);
+
+        // Siguiente paso automático
+        me.receive('conectar_y_transmitir', {});
+    },
+
+    // 2. COMUNICACIÓN DINÁMICA (pushChannel, emit, deleteChannel)
+    conectar_y_transmitir: (me, data) => {
+        const CANAL_DESTINO = 'SERVIDOR_SECRETO';
+        
+        // pushChannel: Nos conectamos dinámicamente a un canal seguro
+        // 'out' significa que queremos HABLAR en ese canal, no escuchar
+        console.log(`📡 [CHANNEL] Conectando a frecuencia encriptada: ${CANAL_DESTINO}`);
+        me.pushChannel('out', CANAL_DESTINO);
+
+        // emit: Enviamos los datos a ese canal específico (sino se especifica envia a todos los canales de su lista que en este caso es el agregado SERVIDOR_SECRETO y por defecto global)
+        console.log(`📤 [EMIT] Transmitiendo paquete de datos...`);
+        me.emit('PAQUETE_ROBADO', { 
+            codigo: me.vars.datos_sensibles, 
+            origen: me.vars.id_interno 
+        }, CANAL_DESTINO);
+
+        // deleteChannel: Nos desconectamos inmediatamente para no ser rastreados
+        me.deleteChannel('out', CANAL_DESTINO);
+        console.log(`✂️ [CHANNEL] Desconexión táctica realizada.`);
+
+        // Siguiente paso
+        me.receive('limpieza_datos', {});
+    },
+
+    // 3. LIMPIEZA DE MEMORIA (deleteVar)
+    limpieza_datos: (me, data) => {
+        console.log(`🧹 [CLEANUP] Iniciando borrado de memoria RAM...`);
+        
+        // deleteVar: Eliminamos la variable para liberar memoria del servidor
+        // y asegurar que si alguien inspecciona la entidad, no encuentre el código.
+        if (me.vars.datos_sensibles) {
+            me.deleteVar('datos_sensibles');
+            console.log(`🗑️ [VAR] Variable 'datos_sensibles' eliminada.`);
+        }
+        
+        console.log(`🔍 [CHECK] Vars actuales:`, JSON.stringify(me.vars));
+        
+        // Siguiente paso
+        me.receive('protocolo_abandono', {});
+    },
+
+    // 4. AUTODESTRUCCIÓN INTELIGENTE (setDestructedAutomatic)
+    protocolo_abandono: (me, data) => {
+        console.log(`⚠️ [SYSTEM] Iniciando protocolo de abandono.`);
+        
+        // setDestructedAutomatic: Configuramos al actor para que muera si se queda "sordo"
+        // (Si su lista de canales de entrada 'channelsIn' llega a 0 mas no de salida, solo de entrada. si se cumple se autoelimina)
+        me.setDestructedAutomatic(true);
+        console.log(`⚙️ [AUTO-DESTRUCT] Armado. Si se pierde la señal, la entidad se borrará.`);
+
+        // deleteChannel ('in'): Dejamos de escuchar el canal de control
+        // Al hacer esto, como 'channelsIn' queda vacío y el flag anterior es true,
+        // la entidad debería autodestruirse sola.
+        console.log(`✂️ [CHANNEL] Cortando cable de control (CONTROL_REMOTO)...`);
+        me.deleteChannel('in', 'CONTROL_REMOTO');
+        me.deleteChannel('in', 'DronEspia') // por defecto todos los actores oyen y hablan con los de su propia especie.
+        me.deleteChannel('in', 'global'); // por defecto todos los actores oyen y hablan con el canal global.
+        
+        // Nota: No necesitamos llamar a selfDestruct() aquí explícitamente, 
+        // el motor lo hará por nosotros al detectar que no hay canales.
+    }
+});
+
+// DEFINICIÓN: SERVIDOR SECRETO (Para verificar que el emit llegó)
+Actor.define('BaseSecreta', { vars: {} }, { // No escucha nada por defecto
+    // Se define la lógica, pero la suscripción será dinámica o manual en este test
+    PAQUETE_ROBADO: (me, data) => {
+        console.log(`🏢 [BASE SECRETA] ¡Paquete recibido! Código: ${data.codigo}`);
+    }
+});
+
+
+// =============================================================
+// EJECUCIÓN DE LA PRUEBA
+// =============================================================
+
+setTimeout(() => {
+    console.log("\n🧪 --- INICIO PRUEBA DE GESTIÓN DE RECURSOS ---\n");
+
+    // 1. Crear el Dron
+    const dron = Actor.create('DronEspia', {});
+    
+    // 2. Crear la Base y suscribirla manualmente al canal secreto
+    const base = Actor.create('BaseSecreta', {});
+    base.pushChannel('in', 'SERVIDOR_SECRETO'); 
+
+    // 3. DETONAR LA SECUENCIA
+    // receive: Forzamos el primer evento desde "fuera"
+    console.log("⚡ [TEST] Inyectando evento inicial...");
+    dron.receive('activar_protocolo', { secretCode: 'LAUNCH_NUKE_123' });
+
+    // 4. VERIFICACIÓN FINAL (Un poco después para ver si murió)
+    setTimeout(() => {
+        const dronesVivos = Actor.getActorsByGrupo('DronEspia');
+        console.log("\n🔎 --- VERIFICACIÓN FINAL ---");
+        if (dronesVivos.length === 0) {
+            console.log("✅ ÉXITO: El dron se autodestruyó correctamente tras perder la señal.");
+        } else {
+            console.log("❌ ERROR: El dron sigue vivo.");
+            console.log(dronesVivos);
+        }
+    }, 500);
+
+}, 1000);
+Console:
+🧪 --- INICIO PRUEBA DE GESTIÓN DE RECURSOS ---
+
+⚡ [TEST] Inyectando evento inicial...
+🤖 [DRON] Recibiendo orden de activación...
+💾 [VAR] Datos sensibles guardados en memoria: LAUNCH_NUKE_123
+🖥️ [CLIENT] HUD actualizado.
+📡 [CHANNEL] Conectando a frecuencia encriptada: SERVIDOR_SECRETO
+📤 [EMIT] Transmitiendo paquete de datos...
+🏢 [BASE SECRETA] ¡Paquete recibido! Código: LAUNCH_NUKE_123
+✂️ [CHANNEL] Desconexión táctica realizada.
+🧹 [CLEANUP] Iniciando borrado de memoria RAM...
+🗑️ [VAR] Variable 'datos_sensibles' eliminada.
+🔍 [CHECK] Vars actuales: {"id_interno":"X-99","estado":"Escaneando"}
+⚠️ [SYSTEM] Iniciando protocolo de abandono.
+⚙️ [AUTO-DESTRUCT] Armado. Si se pierde la señal, la entidad se borrará.
+✂️ [CHANNEL] Cortando cable de control (CONTROL_REMOTO)...
+
+🔎 --- VERIFICACIÓN FINAL ---
+✅ ÉXITO: El dron se autodestruyó correctamente tras perder la señal.
+
+Prueba Final: Recepcion de datos del cliente.
+Server logic atributo:
+// =============================================================
+// DEFINICIÓN DEL ACTOR DE PRUEBA
+// =============================================================
+Actor.define('Tester', {
+    vars: { x: 0, y: 0, status: 'Idle', energy: 100 }
+}, {
+    // 1. Recibir Movimiento
+    sync_position: (me, data) => {
+        const prevX = me.vars.x;
+        me.setVar('x', data.x);
+        me.setVar('y', data.y);
+        
+        console.log(`📍 [SERVER:ACTOR] ${data.id} movido. X: ${prevX} -> ${data.x}`);
+    },
+
+    // 2. Recibir Habilidad (Prueba de Lógica)
+    execute_test_skill: (me, data) => {
+        console.log(`⚡ [SERVER:ACTOR] Ejecutando Skill: ${data.name}`);
+        
+        if (me.vars.energy >= 10) {
+            me.setVar('energy', me.vars.energy - 10);
+            me.setVar('status', 'Casting');
+            
+            // Confirmar al cliente que funcionó
+            me.emitClient('skill_confirmed', { 
+                remainingEnergy: me.vars.energy,
+                msg: 'Habilidad procesada correctamente'
+            });
+        } else {
+            console.log(`⚠️ [SERVER:ACTOR] Energía insuficiente.`);
+        }
+    }
+});
+
+// =============================================================
+// RUTEO DE INPUTS
+// =============================================================
+function onInput(packet, state) {
+    // Buscamos al actor por el ID del socket
+    const actors = Actor.getActorsByGrupo('Tester');
+    let me = actors.find(a => a.vars.id === packet.id);
+
+    switch (packet.type) {
+        
+        // PASO 1: CONEXIÓN
+        case 'join_test':
+            if (!me) {
+                console.log(`🔌 [SERVER:NET] Solicitud de Join recibida: ${packet.id}`);
+                me = Actor.create('Tester', {
+                    id: packet.id,
+                    x: 0,
+                    y: 0
+                });
+                me.emitClient('test_start', { msg: 'Sesión de prueba iniciada' });
+            }
+            break;
+
+        // PASO 2: MOVIMIENTO AUTOMÁTICO
+        case 'auto_move':
+            if (me) {
+                me.receive('sync_position', packet);
+            }
+            break;
+
+        // PASO 3: ACCIÓN AUTOMÁTICA
+        case 'auto_skill':
+            if (me) {
+                me.receive('execute_test_skill', packet);
+            }
+            break;
+
+        // PASO 4: DESCONEXIÓN
+        case 'player_leave':
+            if (me) {
+                console.log(`🏁 [SERVER:NET] Test finalizado para ${packet.id}. Limpiando.`);
+                me.selfDestruct();
+            }
+            break;
+    }
+    console.log(state);
+}
+Client atributo:
+
+    
+    console.log("🤖 [CLIENT] Iniciando secuencia de prueba automatizada...");
+
+    const MY_ID = Client.myId || 'AutoBot_' + Math.floor(Math.random()*100);
+
+    // --- SECUENCIA DE EVENTOS ---
+
+    // T+0ms: UNIRSE
+    setTimeout(() => {
+        console.log("📤 [CLIENT] Enviando: join_test");
+        Client.emit('join_test', { id: MY_ID });
+    }, 100);
+
+    // T+1000ms: MOVERSE (Simular paso 1)
+    setTimeout(() => {
+        console.log("📤 [CLIENT] Enviando: auto_move (X=10)");
+        Client.emit('auto_move', { x: 10, y: 0 });
+    }, 1000);
+
+    // T+2000ms: MOVERSE (Simular paso 2)
+    setTimeout(() => {
+        console.log("📤 [CLIENT] Enviando: auto_move (X=25)");
+        Client.emit('auto_move', { x: 25, y: 5 });
+    }, 2000);
+
+    // T+3000ms: USAR HABILIDAD
+    setTimeout(() => {
+        console.log("📤 [CLIENT] Enviando: auto_skill");
+        Client.emit('auto_skill', { name: 'HyperBeam' });
+    }, 3000);
+
+    // T+4000ms: FINALIZAR (Simulamos desconexión lógica)
+    setTimeout(() => {
+        console.log("✅ [CLIENT] Secuencia finalizada.");
+    }, 4000);
+
+    // --- ESCUCHAR RESPUESTAS DEL SERVIDOR (Verificación) ---
+    
+    Client.on('test_start', (data) => {
+        console.log(`📥 [CLIENT] Recibido 'test_start': ${data.msg}`);
+    });
+
+    Client.on('skill_confirmed', (data) => {
+        console.log(`📥 [CLIENT] Recibido 'skill_confirmed'. Energía restante en server: ${data.remainingEnergy}`);
+    });
+
+
+window.onInputLoop = () => {};
+Console Server:
+🔌 [SERVER:NET] Solicitud de Join recibida: aldo
+{
+  masterMap: Map(0) {},
+  isPaused: false,
+  Tester: [ { x: 0, y: 0, status: 'Idle', energy: 100, id: 'aldo' } ]
+}
+📍 [SERVER:ACTOR] aldo movido. X: 0 -> 10
+{
+  masterMap: Map(0) {},
+  isPaused: false,
+  Tester: [ { x: 10, y: 0, status: 'Idle', energy: 100, id: 'aldo' } ]
+}
+📍 [SERVER:ACTOR] aldo movido. X: 10 -> 25
+{
+  masterMap: Map(0) {},
+  isPaused: false,
+  Tester: [ { x: 25, y: 5, status: 'Idle', energy: 100, id: 'aldo' } ]
+}
+⚡ [SERVER:ACTOR] Ejecutando Skill: HyperBeam
+{
+  masterMap: Map(0) {},
+  isPaused: false,
+  Tester: [ { x: 25, y: 5, status: 'Casting', energy: 90, id: 'aldo' } ]
+}
+
+Console Client:
+🤖 [CLIENT] Iniciando secuencia de prueba automatizada...
+play?room=Sala%20Nueva:1034 🛠️ Código inyectado.
+VM252:11 📤 [CLIENT] Enviando: join_test
+VM252:41 📥 [CLIENT] Recibido 'test_start': Sesión de prueba iniciada
+VM252:17 📤 [CLIENT] Enviando: auto_move (X=10)
+VM252:23 📤 [CLIENT] Enviando: auto_move (X=25)
+VM252:29 📤 [CLIENT] Enviando: auto_skill
+VM252:45 📥 [CLIENT] Recibido 'skill_confirmed'. Energía restante en server: 90
+VM252:35 ✅ [CLIENT] Secuencia finalizada.
